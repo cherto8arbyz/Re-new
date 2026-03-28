@@ -1,0 +1,230 @@
+/* Onboarding / Registration Screen */
+.onboarding {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding:
+    clamp(12px, 3vh, 20px)
+    var(--app-horizontal-padding)
+    calc(var(--space-xl) + max(var(--safe-area-bottom), var(--keyboard-inset-height)));
+  background: var(--color-bg);
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.onboarding__header {
+  text-align: center;
+  padding: clamp(12px, 4vh, var(--space-2xl)) 0 var(--space-lg);
+}
+
+.onboarding__logo {
+  font-size: var(--font-size-3xl);
+  font-weight: var(--font-weight-black);
+  color: var(--color-accent);
+  letter-spacing: var(--letter-spacing-tight);
+}
+
+.onboarding__logo span {
+  color: var(--color-accent-warm);
+}
+
+.onboarding__tagline {
+  font-size: var(--font-size-md);
+  color: var(--color-text-secondary);
+  margin-top: var(--space-xs);
+}
+
+/* Form */
+.onboarding__form {
+  display: flex;
+  flex-direction: column;
+  gap: clamp(10px, 2.6vh, var(--space-lg));
+  flex: 1;
+}
+
+.onboarding__field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.onboarding__hint {
+  margin: 0;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+}
+
+.onboarding__label {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-primary);
+  text-transform: uppercase;
+  letter-spacing: var(--letter-spacing-wide);
+}
+
+.onboarding__input {
+  padding: var(--space-md) var(--space-lg);
+  border: 1.5px solid var(--color-border);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
+  font-family: var(--font-family);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  outline: none;
+  transition: border-color var(--transition-fast);
+}
+
+.onboarding__input:focus {
+  border-color: var(--color-accent);
+}
+
+.onboarding__input::placeholder {
+  color: var(--color-text-tertiary);
+}
+
+/* Style selector */
+.onboarding__styles {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+
+.onboarding__style-btn {
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family);
+  color: var(--color-text-secondary);
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.onboarding__style-btn:hover {
+  border-color: var(--color-accent);
+  color: var(--color-text-primary);
+}
+
+.onboarding__style-btn--active {
+  background: var(--color-accent);
+  color: #FFFFFF;
+  border-color: var(--color-accent);
+}
+
+/* Avatar area */
+.onboarding__avatar-area {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-md);
+}
+
+.onboarding__avatar-preview {
+  width: clamp(104px, 30vw, 140px);
+  height: clamp(156px, 42vw, 196px);
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  border: 2px dashed var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  transition: all var(--transition-normal);
+}
+
+.onboarding__avatar-preview svg {
+  width: 60%;
+  height: 60%;
+}
+
+.onboarding__avatar-img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.onboarding__avatar-actions {
+  display: flex;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.onboarding__upload-btn,
+.onboarding__camera-btn {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding: var(--space-sm) var(--space-md);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  font-family: var(--font-family);
+  background: var(--color-surface);
+  border: 1.5px solid var(--color-border);
+  color: var(--color-text-primary);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.onboarding__upload-btn:hover,
+.onboarding__camera-btn:hover {
+  border-color: var(--color-accent);
+  box-shadow: var(--shadow-sm);
+}
+
+.onboarding__upload-btn svg,
+.onboarding__camera-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* Status */
+.onboarding__status {
+  font-size: var(--font-size-sm);
+  color: var(--color-accent-warm);
+  text-align: center;
+  min-height: 20px;
+  transition: color var(--transition-fast);
+}
+
+.onboarding__status--error {
+  color: #D32F2F;
+}
+
+/* Submit button */
+.onboarding__submit {
+  padding: var(--space-md) var(--space-lg);
+  border-radius: var(--radius-md);
+  font-size: var(--font-size-lg);
+  font-weight: var(--font-weight-semibold);
+  font-family: var(--font-family);
+  background: var(--color-accent);
+  color: #FFFFFF;
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  box-shadow: var(--shadow-md);
+  margin-top: auto;
+  position: sticky;
+  bottom: var(--space-sm);
+  z-index: 2;
+}
+
+.onboarding__submit:hover:not(:disabled) {
+  box-shadow: var(--shadow-lg);
+  transform: translateY(-1px);
+}
+
+.onboarding__submit:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.onboarding__submit:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  box-shadow: none;
+}

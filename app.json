@@ -1,0 +1,19 @@
+{
+  "expo": {
+    "name": "Re:new",
+    "slug": "renew-app",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "renew",
+    "plugins": [
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Re:new uses your photo library to create avatars and add wardrobe items.",
+          "cameraPermission": "Re:new uses your camera to capture avatar and wardrobe photos."
+        }
+      ]
+    ]
+  }
+}

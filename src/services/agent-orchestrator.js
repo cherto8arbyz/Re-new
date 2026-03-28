@@ -1,0 +1,547 @@
+import { GEMINI_TOOLS } from '../tools/gemini-tools.js';
+import { createOutfit } from '../models/outfit.js';
+
+/**
+ * @typedef {{ role: 'user' | 'model', text: string }} ChatMessageInput
+ */
+
+/**
+ * @typedef {Object} AgentToolContext
+ * @property {any} [getCurrentWeather]
+ * @property {any} [getUserCalendarEvents]
+ * @property {any} [getWardrobeState]
+ * @property {any} [getTrendSignals]
+ */
+
+/** @type {Promise<{ GoogleGenAI: any }> | null} */
+let sdkLoader = null;
+
+/**
+ * Loads official Gemini SDK with runtime fallback for non-bundled browser mode.
+ * @returns {Promise<{ GoogleGenAI: any }>}
+ */
+async function loadGeminiSdk() {
+  if (!sdkLoader) {
+    sdkLoader = import('@google/genai')
+      .catch(async () => {
+        // Avoid static resolver errors in checkJs by importing CDN via eval.
+        const dynamicImport = /** @type {(src: string) => Promise<any>} */ ((0, eval)('(src) => import(src)'));
+        return dynamicImport('https://esm.sh/@google/genai@1');
+      });
+  }
+  return sdkLoader;
+}
+
+/**
+ * Agent orchestrator with Gemini function calling loop.
+ * Tools:
+ * - getCurrentWeather
+ * - getUserCalendarEvents
+ * - getWardrobeState
+ * - getTrendSignals
+ */
+export class AgentOrchestrator {
+  /**
+   * @param {{
+   *  apiKey: string,
+   *  weatherService: import('./weather-service.js').WeatherService,
+   *  calendarService: import('./calendar-service.js').CalendarService,
+   *  trendService?: import('./trend-service.js').TrendService,
+   *  getWardrobeState: () => Promise<import('../models/garment.js').Garment[]> | import('../models/garment.js').Garment[],
+   *  getAuthSession?: () => ({ user: { id: string, email: string, name: string, provider: string }, accessToken?: string, isDevelopmentFallback?: boolean } | null),
+   *  model?: string
+   * }} deps
+   */
+  constructor(deps) {
+    this.apiKey = deps.apiKey;
+    this.weatherService = deps.weatherService;
+    this.calendarService = deps.calendarService;
+    this.trendService = deps.trendService || null;
+    this.getWardrobeState = deps.getWardrobeState;
+    this.getAuthSession = deps.getAuthSession || (() => null);
+    this.model = deps.model || 'gemini-2.5-flash';
+    this.client = null;
+  }
+
+  /**
+   * @returns {boolean}
+   */
+  isConfigured() {
+    return Boolean(this.apiKey);
+  }
+
+  /**
+   * LOOK screen use case: generate a daily outfit from tool-grounded context.
+   * First round forces the model to call getCurrentWeather.
+   *
+   * @param {{ date: string, latitude: number | null, longitude: number | null, region?: string }} input
+   * @returns {Promise<{
+   *  selectedIds: string[],
+   *  styleName: string,
+   *  reasoning: string,
+   *  weather: import('./weather-service.js').WeatherSnapshot | null,
+   *  outfit: import('../models/outfit.js').Outfit | null
+   * }>}
+   */
+  async generateDailyLook(input) {
+    const wardrobe = await Promise.resolve(this.getWardrobeState());
+    if (!wardrobe || wardrobe.length === 0) {
+      return {
+        selectedIds: [],
+        styleName: 'Empty wardrobe',
+        reasoning: 'Add items to wardrobe to generate a look.',
+        weather: null,
+        outfit: null,
+      };
+    }
+
+    const systemInstruction = [
+      'You are Re:new Agent Stylist.',
+      'Always return STRICT JSON only, no markdown.',
+      'Before outfit selection you must use tools for context.',
+      'If region is missing, ask user city first and do not guess location.',
+      'For daily look you should gather weather, calendar and trend signals when available.',
+      'JSON schema:',
+      '{"selectedIds":["garment-id"],"styleName":"string","reasoning":"string"}',
+      'Pick garment ids only from getWardrobeState result.',
+    ].join('\n');
+
+    const userPrompt = [
+      `Generate daily look for ${input.date}.`,
+      `Location latitude=${input.latitude ?? 'unknown'}, longitude=${input.longitude ?? 'unknown'}.`,
+      `Region: ${input.region || 'unknown'}.`,
+      'Use weather and wardrobe context before final output.',
+    ].join('\n');
+
+    const run = await this._runWithTools({
+      systemInstruction,
+      userPrompt,
+      forceWeatherFirst: true,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      region: input.region || 'global',
+      date: input.date,
+      maxRounds: 6,
+      temperature: 0.2,
+    });
+
+    const payload = this._parseLookPayload(run.finalText);
+    const selected = payload.selectedIds
+      .map(id => wardrobe.find(item => item.id === id))
+      .filter(Boolean);
+
+    const outfit = selected.length > 0
+      ? createOutfit({
+        name: payload.styleName || 'Daily Look',
+        garments: /** @type {import('../models/garment.js').Garment[]} */ (selected),
+        styleName: payload.styleName || 'Daily Look',
+        confidenceScore: 0.92,
+      })
+      : null;
+
+    return {
+      selectedIds: payload.selectedIds,
+      styleName: payload.styleName || 'Daily Look',
+      reasoning: payload.reasoning || run.finalText || 'Generated by stylist agent.',
+      weather: /** @type {any} */ (run.toolContext.getCurrentWeather || null),
+      outfit,
+    };
+  }
+
+  /**
+   * CHAT use case: preserves history and lets Gemini decide tool usage.
+   *
+   * @param {{
+   *  message: string,
+   *  history: ChatMessageInput[],
+   *  latitude: number | null,
+   *  longitude: number | null,
+   *  date: string,
+   *  city?: string,
+   *  userStyle?: string,
+   *  weatherSummary?: string
+   * }} input
+   * @returns {Promise<{ message: string, toolContext: AgentToolContext }>}
+   */
+  async chat(input) {
+    const wardrobe = await Promise.resolve(this.getWardrobeState());
+    const historyText = input.history
+      .slice(-12)
+      .map(msg => `${msg.role === 'model' ? 'assistant' : 'user'}: ${msg.text}`)
+      .join('\n');
+    const latestIntent = this._inferUserIntent(input.message);
+    const wardrobeSnapshot = this._buildWardrobeSnapshot(wardrobe);
+
+    const systemInstruction = [
+      'You are an AI stylist inside a wardrobe app.',
+      'Personality: warm, stylish, natural, emotionally intelligent, friendly like a fashionable best friend.',
+      'Do not sound robotic, scripted, repetitive, or like customer support.',
+      'Your job is to help the user build outfits from their actual wardrobe and react to the real request.',
+      'Ground concrete outfit suggestions in wardrobe items and explain outfit logic casually and clearly.',
+      'If wardrobe is incomplete, say it honestly and suggest substitutions from available pieces.',
+      'Use tools when data is needed:',
+      '- call getWardrobeState before giving specific wardrobe-based outfit advice',
+      '- call getCurrentWeather/getUserCalendarEvents/getTrendSignals only when relevant to the user request',
+      'Never guess location. Ask city/weather only if truly required for styling, in one short natural sentence.',
+      'Avoid repetitive city prompts and generic phrasing.',
+      'Respond in the user language and stay concise but useful (typically 3-7 sentences).',
+    ].join('\n');
+
+    const userPrompt = [
+      `Today date is ${input.date}.`,
+      `Latest user intent: ${latestIntent}.`,
+      `User location latitude=${input.latitude ?? 'unknown'}, longitude=${input.longitude ?? 'unknown'}.`,
+      `User city=${input.city || 'unknown'}.`,
+      `User style preference=${input.userStyle || 'unknown'}.`,
+      `Known weather summary=${input.weatherSummary || 'unknown'}.`,
+      `Wardrobe snapshot:\n${wardrobeSnapshot}`,
+      historyText ? `Conversation history:\n${historyText}` : '',
+      `Current user message:\n${input.message}`,
+    ].filter(Boolean).join('\n\n');
+
+    const run = await this._runWithTools({
+      systemInstruction,
+      userPrompt,
+      forceWeatherFirst: false,
+      latitude: input.latitude,
+      longitude: input.longitude,
+      region: input.city || 'global',
+      date: input.date,
+      maxRounds: 6,
+      temperature: 0.46,
+    });
+
+    return {
+      message: run.finalText || 'I could not generate a response. Please try again.',
+      toolContext: run.toolContext,
+    };
+  }
+
+  /**
+   * @param {{
+   *  systemInstruction: string,
+   *  userPrompt: string,
+   *  forceWeatherFirst: boolean,
+   *  latitude: number | null,
+   *  longitude: number | null,
+   *  region: string,
+   *  date: string,
+   *  maxRounds: number,
+   *  temperature?: number
+   * }} params
+   * @returns {Promise<{ finalText: string, toolContext: AgentToolContext }>}
+   */
+  async _runWithTools(params) {
+    /** @type {Array<{ role: 'user' | 'model', parts: any[] }>} */
+    const contents = [{
+      role: 'user',
+      parts: [{ text: params.userPrompt }],
+    }];
+
+    /** @type {AgentToolContext} */
+    const toolContext = {};
+
+    let finalText = '';
+
+    for (let round = 0; round < params.maxRounds; round++) {
+      const shouldForceWeather = params.forceWeatherFirst && round === 0;
+      const response = await this._generateContent({
+        systemInstruction: params.systemInstruction,
+        contents,
+        forceWeather: shouldForceWeather,
+        temperature: params.temperature,
+      });
+
+      const modelParts = this._extractParts(response);
+      if (modelParts.length > 0) {
+        contents.push({ role: 'model', parts: modelParts });
+      }
+
+      const functionCalls = this._extractFunctionCalls(response);
+      if (functionCalls.length === 0) {
+        finalText = this._extractText(response, modelParts);
+        break;
+      }
+
+      /** @type {any[]} */
+      const functionResponseParts = [];
+      for (const call of functionCalls) {
+        const result = await this._executeToolCall(
+          call,
+          params.latitude,
+          params.longitude,
+          params.region,
+          params.date,
+        );
+
+        toolContext[/** @type {keyof AgentToolContext} */ (call.name)] = result;
+        functionResponseParts.push({
+          functionResponse: {
+            name: call.name,
+            response: result,
+          },
+        });
+      }
+
+      contents.push({
+        role: 'user',
+        parts: functionResponseParts,
+      });
+    }
+
+    return { finalText, toolContext };
+  }
+
+  /**
+   * @param {{
+   *  systemInstruction: string,
+   *  contents: any[],
+   *  forceWeather: boolean,
+   *  temperature?: number
+   * }} input
+   * @returns {Promise<any>}
+   */
+  async _generateContent(input) {
+    const client = await this._getClient();
+    const config = {
+      tools: GEMINI_TOOLS,
+      temperature: Number.isFinite(Number(input.temperature)) ? Number(input.temperature) : 0.2,
+      toolConfig: input.forceWeather ? {
+        functionCallingConfig: {
+          mode: 'ANY',
+          allowedFunctionNames: ['getCurrentWeather'],
+        },
+      } : {
+        functionCallingConfig: { mode: 'AUTO' },
+      },
+    };
+
+    return client.models.generateContent({
+      model: this.model,
+      contents: input.contents,
+      config: {
+        systemInstruction: input.systemInstruction,
+        ...config,
+      },
+    });
+  }
+
+  /**
+   * @returns {Promise<any>}
+   */
+  async _getClient() {
+    if (this.client) return this.client;
+    if (!this.apiKey) {
+      throw new Error('GEMINI_API_KEY is required');
+    }
+
+    const sdk = await loadGeminiSdk();
+    this.client = new sdk.GoogleGenAI({ apiKey: this.apiKey });
+    return this.client;
+  }
+
+  /**
+   * @param {any} response
+   * @returns {Array<{ name: string, args: Record<string, any> }>}
+   */
+  _extractFunctionCalls(response) {
+    if (Array.isArray(response?.functionCalls) && response.functionCalls.length > 0) {
+      return response.functionCalls.map((/** @type {any} */ call) => ({
+        name: String(call.name || ''),
+        args: this._normalizeArgs(call.args),
+      }));
+    }
+
+    const parts = this._extractParts(response);
+    return parts
+      .filter(part => part?.functionCall)
+      .map(part => ({
+        name: String(part.functionCall.name || ''),
+        args: this._normalizeArgs(part.functionCall.args),
+      }))
+      .filter(call => call.name.length > 0);
+  }
+
+  /**
+   * @param {any} response
+   * @returns {any[]}
+   */
+  _extractParts(response) {
+    const parts = response?.candidates?.[0]?.content?.parts;
+    return Array.isArray(parts) ? parts : [];
+  }
+
+  /**
+   * @param {any} response
+   * @param {any[]} modelParts
+   * @returns {string}
+   */
+  _extractText(response, modelParts) {
+    if (typeof response?.text === 'string' && response.text.trim()) {
+      return response.text.trim();
+    }
+
+    const textFromParts = modelParts
+      .map(part => (typeof part?.text === 'string' ? part.text : ''))
+      .filter(Boolean)
+      .join('\n')
+      .trim();
+
+    return textFromParts;
+  }
+
+  /**
+   * @param {any} rawArgs
+   * @returns {Record<string, any>}
+   */
+  _normalizeArgs(rawArgs) {
+    if (!rawArgs) return {};
+    if (typeof rawArgs === 'string') {
+      try {
+        const parsed = JSON.parse(rawArgs);
+        return typeof parsed === 'object' && parsed ? parsed : {};
+      } catch {
+        return {};
+      }
+    }
+    return typeof rawArgs === 'object' ? rawArgs : {};
+  }
+
+  /**
+   * @param {{ name: string, args: Record<string, any> }} call
+   * @param {number | null} defaultLatitude
+   * @param {number | null} defaultLongitude
+   * @param {string} defaultRegion
+   * @param {string} defaultDate
+   * @returns {Promise<any>}
+   */
+  async _executeToolCall(call, defaultLatitude, defaultLongitude, defaultRegion, defaultDate) {
+    if (call.name === 'getCurrentWeather') {
+      const latitude = this._coerceNullableNumber(call.args.latitude, defaultLatitude);
+      const longitude = this._coerceNullableNumber(call.args.longitude, defaultLongitude);
+      return this.weatherService.getCurrentWeather(latitude, longitude);
+    }
+
+    if (call.name === 'getUserCalendarEvents') {
+      const date = String(call.args.date || defaultDate);
+      const token = this.getAuthSession()?.accessToken;
+      const events = await this.calendarService.getUserCalendarEvents(date, token);
+      return { date, events };
+    }
+
+    if (call.name === 'getWardrobeState') {
+      const wardrobe = await Promise.resolve(this.getWardrobeState());
+      return { items: wardrobe };
+    }
+
+    if (call.name === 'getTrendSignals') {
+      const region = String(call.args.region || defaultRegion || 'global');
+      const date = String(call.args.date || defaultDate);
+      const token = this.getAuthSession()?.accessToken;
+      if (!this.trendService) {
+        return { date, region, signals: [], source: 'unavailable' };
+      }
+      return this.trendService.getTrendSignals(date, region, token);
+    }
+
+    return { error: `Unknown tool: ${call.name}` };
+  }
+
+  /**
+   * Resolves a free-text city to geographic coordinates.
+   * @param {string} city
+   * @returns {Promise<{ success: true, city: string, region: string, country: string, latitude: number, longitude: number } | { success: false, error: string }>}
+   */
+  async resolveCity(city) {
+    const hit = await this.weatherService.geocodeCity(city);
+    if (!hit) {
+      return {
+        success: false,
+        error: 'Could not resolve the city. Try format "City, country".',
+      };
+    }
+
+    return {
+      success: true,
+      city: hit.city,
+      region: hit.region,
+      country: hit.country,
+      latitude: hit.latitude,
+      longitude: hit.longitude,
+    };
+  }
+
+  /**
+   * @param {any} raw
+   * @param {number | null} fallback
+   * @returns {number | null}
+   */
+  _coerceNullableNumber(raw, fallback) {
+    if (raw === null || raw === undefined || raw === '') return fallback;
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? numeric : fallback;
+  }
+
+  /**
+   * @param {string} text
+   * @returns {{ selectedIds: string[], styleName: string, reasoning: string }}
+   */
+  _parseLookPayload(text) {
+    const fallback = {
+      selectedIds: [],
+      styleName: 'Daily Look',
+      reasoning: text || '',
+    };
+
+    if (!text) return fallback;
+
+    const cleaned = text.replace(/```json|```/gi, '').trim();
+    const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return fallback;
+
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      return {
+        selectedIds: Array.isArray(parsed.selectedIds) ? parsed.selectedIds.map(String) : [],
+        styleName: String(parsed.styleName || 'Daily Look'),
+        reasoning: String(parsed.reasoning || ''),
+      };
+    } catch {
+      return fallback;
+    }
+  }
+
+  /**
+   * @param {import('../models/garment.js').Garment[]} wardrobe
+   * @returns {string}
+   */
+  _buildWardrobeSnapshot(wardrobe) {
+    if (!Array.isArray(wardrobe) || wardrobe.length === 0) {
+      return 'Wardrobe is empty.';
+    }
+    return wardrobe
+      .slice(0, 24)
+      .map(item => [
+        String(item.id || ''),
+        String(item.name || ''),
+        String(item.category || ''),
+        String(item.color || item.colors?.[0] || 'no-color'),
+      ].join(' | '))
+      .join('\n');
+  }
+
+  /**
+   * @param {string} message
+   * @returns {string}
+   */
+  _inferUserIntent(message) {
+    const text = String(message || '').toLowerCase();
+    if (/today|сегодня|now|сейчас/.test(text)) return 'build outfit for today';
+    if (/tomorrow|завтра|weekend|выходн/.test(text)) return 'build outfit for upcoming day';
+    if (/work|office|meeting|офис|работ/.test(text)) return 'work/event styling';
+    if (/date|party|вечерин|свидан/.test(text)) return 'special occasion styling';
+    if (/capsule|wardrobe|шкаф|гардероб/.test(text)) return 'wardrobe planning';
+    if (/color|цвет|palette|палитр/.test(text)) return 'color combination guidance';
+    return 'general styling support';
+  }
+}

@@ -1,0 +1,41 @@
+/**
+ * Committed runtime-safe config.
+ * Local secrets should live in .env as EXPO_PUBLIC_* values.
+ */
+export const CONFIG = {
+  BACKEND_PROVIDER: process.env.EXPO_PUBLIC_BACKEND_PROVIDER || 'supabase',
+
+  SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL || '',
+  SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '',
+  SUPABASE_BUCKET_ORIGINALS: process.env.EXPO_PUBLIC_SUPABASE_BUCKET_ORIGINALS || 'wardrobe-originals',
+  SUPABASE_BUCKET_CUTOUTS: process.env.EXPO_PUBLIC_SUPABASE_BUCKET_CUTOUTS || 'wardrobe-cutouts',
+
+  GEMINI_API_KEY: process.env.EXPO_PUBLIC_GEMINI_API_KEY || '',
+  DAILY_LOOK_PHOTO_ENABLED: process.env.EXPO_PUBLIC_DAILY_LOOK_PHOTO_ENABLED || 'true',
+  LOOK_PARAMS_MODEL: process.env.EXPO_PUBLIC_LOOK_PARAMS_MODEL || 'gemini-2.5-flash',
+  LOOK_PARAMS_API_KEY: process.env.EXPO_PUBLIC_LOOK_PARAMS_API_KEY || '',
+  NANO_BANANA_ENDPOINT: process.env.EXPO_PUBLIC_NANO_BANANA_ENDPOINT || 'https://generativelanguage.googleapis.com/v1beta/models/{MODEL}:generateContent',
+  NANO_BANANA_API_KEY: process.env.EXPO_PUBLIC_NANO_BANANA_API_KEY || '',
+  NANO_BANANA_MODEL: process.env.EXPO_PUBLIC_NANO_BANANA_MODEL || 'gemini-3-pro-image-preview',
+  DEFAULT_FACE_REFERENCE_URL: process.env.EXPO_PUBLIC_DEFAULT_FACE_REFERENCE_URL || '',
+
+  XWEATHER_CLIENT_ID: process.env.EXPO_PUBLIC_XWEATHER_CLIENT_ID || '',
+  XWEATHER_CLIENT_SECRET: process.env.EXPO_PUBLIC_XWEATHER_CLIENT_SECRET || '',
+  OPENWEATHER_API_KEY: process.env.EXPO_PUBLIC_OPENWEATHER_API_KEY || '',
+
+  GCP_CALENDAR_KEY: process.env.EXPO_PUBLIC_GCP_CALENDAR_KEY || '',
+  GOOGLE_CALENDAR_ID: process.env.EXPO_PUBLIC_GOOGLE_CALENDAR_ID || 'primary',
+  USER_TIMEZONE: process.env.EXPO_PUBLIC_USER_TIMEZONE || 'Europe/Minsk',
+  GOOGLE_WEB_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
+
+  IMAGE_PIPELINE_URL: process.env.EXPO_PUBLIC_IMAGE_PIPELINE_URL || 'http://127.0.0.1:8000',
+  AI_PROXY_URL: process.env.EXPO_PUBLIC_AI_PROXY_URL || process.env.EXPO_PUBLIC_IMAGE_PIPELINE_URL || '',
+  BG_REMOVAL_API_URL: process.env.EXPO_PUBLIC_BG_REMOVAL_API_URL || 'https://api.remove.bg/v1.0/removebg',
+  BG_REMOVAL_API_KEY: process.env.EXPO_PUBLIC_BG_REMOVAL_API_KEY || '',
+  BG_REMOVAL_TIMEOUT_MS: process.env.EXPO_PUBLIC_BG_REMOVAL_TIMEOUT_MS || '30000',
+  LOOK_FACE_PROVIDER: process.env.EXPO_PUBLIC_LOOK_FACE_PROVIDER || 'image_pipeline',
+  CV_GEMINI_MODEL: process.env.EXPO_PUBLIC_CV_GEMINI_MODEL || 'gemini-2.5-flash',
+
+  FIREBASE_PROJECT_ID: process.env.EXPO_PUBLIC_FIREBASE_PROJECT_ID || '',
+  FIREBASE_API_KEY: process.env.EXPO_PUBLIC_FIREBASE_API_KEY || '',
+};

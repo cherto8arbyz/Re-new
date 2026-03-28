@@ -1,0 +1,23 @@
+.env
+.env.*
+node_modules/
+.DS_Store
+
+# Expo
+.expo/
+.expo-export-debug/
+dist/
+web-build/
+
+# npm cache
+.npm-cache/
+
+# Build outputs
+*.tsbuildinfo
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+Thumbs.db

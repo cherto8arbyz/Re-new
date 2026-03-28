@@ -1,0 +1,61 @@
+{
+  "cv_pipeline": {
+    "input": {
+      "photoDataUrl": "data:image/jpeg;base64,...",
+      "userId": "uuid-or-app-user-id",
+      "persist": true
+    },
+    "output": {
+      "success": true,
+      "garment": {
+        "name": "Beige Wide Pants",
+        "category": "pants",
+        "color": "#C4A882",
+        "imageUrl": "https://.../wardrobe-cutouts/<user>/<id>/cutout.png",
+        "position": { "x": 18, "y": 38, "width": 38, "height": 38 },
+        "originalUrl": "https://.../wardrobe-originals/<user>/<id>/original.jpg",
+        "cutoutUrl": "https://.../wardrobe-cutouts/<user>/<id>/cutout.png",
+        "maskUrl": "https://.../wardrobe-cutouts/<user>/<id>/mask.png",
+        "metadata": {
+          "season": "summer",
+          "material": "linen",
+          "tags": ["wide leg", "minimal"],
+          "segmentation": "mediapipe",
+          "classifier": "gemini-vision",
+          "editable": {
+            "name": "Beige Wide Pants",
+            "color": "#C4A882",
+            "category": "pants",
+            "season": "summer",
+            "material": "linen"
+          }
+        }
+      }
+    }
+  },
+  "trend_engine": {
+    "tool": "getTrendSignals",
+    "input": { "date": "YYYY-MM-DD", "region": "Minsk, Belarus" },
+    "output": {
+      "date": "YYYY-MM-DD",
+      "region": "Minsk, Belarus",
+      "signals": [
+        { "tag": "quiet luxury", "score": 0.91, "source": "manual-curation" },
+        { "tag": "wide leg", "score": 0.84, "source": "social-ingestion" }
+      ],
+      "source": "supabase"
+    }
+  },
+  "chat_location_gate": {
+    "rule": "If city/region is missing, ask user city before weather tool calls.",
+    "question": "В каком вы городе?",
+    "resolution_output": {
+      "success": true,
+      "city": "Minsk",
+      "region": "Minsk",
+      "country": "Belarus",
+      "latitude": 53.9,
+      "longitude": 27.56
+    }
+  }
+}

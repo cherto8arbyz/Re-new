@@ -1,0 +1,7 @@
+[
+  { "tag": "quiet luxury", "score": 0.95, "source": "json-feed" },
+  { "tag": "wide leg", "score": 0.88, "source": "json-feed" },
+  { "tag": "structured outerwear", "score": 0.81, "source": "json-feed" },
+  { "tag": "monochrome", "score": 0.78, "source": "json-feed" },
+  { "tag": "sport luxe", "score": 0.69, "source": "json-feed" }
+]

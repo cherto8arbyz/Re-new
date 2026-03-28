@@ -1,0 +1,97 @@
+.tab-bar {
+  background: var(--color-surface);
+  border-top: 1px solid var(--color-divider);
+  padding-bottom: var(--safe-area-bottom);
+}
+
+.tab-bar__nav {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-around;
+  padding: var(--space-sm) var(--app-horizontal-padding) var(--space-xs);
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.tab-bar__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: var(--space-xs);
+  border-radius: var(--radius-md);
+  transition: all var(--transition-fast);
+  min-width: 48px;
+  position: relative;
+}
+
+.tab-bar__item:active {
+  transform: scale(0.9);
+}
+
+.tab-bar__icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-tab-inactive);
+  transition: color var(--transition-fast);
+}
+
+.tab-bar__icon svg {
+  width: 22px;
+  height: 22px;
+}
+
+.tab-bar__label {
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-tab-inactive);
+  transition: color var(--transition-fast);
+}
+
+/* Active state */
+.tab-bar__item--active .tab-bar__icon {
+  color: var(--color-tab-active);
+}
+
+.tab-bar__item--active .tab-bar__label {
+  color: var(--color-tab-active);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* Center button — elevated */
+.tab-bar__item--center {
+  position: relative;
+  margin-top: -14px;
+}
+
+.tab-bar__item--center .tab-bar__icon {
+  width: 48px;
+  height: 48px;
+  background: var(--color-accent);
+  border-radius: 50%;
+  color: white;
+  box-shadow: var(--shadow-lg);
+  transition: all var(--transition-fast);
+}
+
+.tab-bar__item--center .tab-bar__icon svg {
+  width: 24px;
+  height: 24px;
+}
+
+.tab-bar__item--center:active .tab-bar__icon {
+  transform: scale(0.9);
+  box-shadow: var(--shadow-sm);
+}
+
+.tab-bar__item--center.tab-bar__item--active .tab-bar__icon {
+  background: var(--color-accent-warm);
+  box-shadow: 0 4px 20px rgba(232, 87, 42, 0.35);
+}
+
+.tab-bar__item--center .tab-bar__label {
+  margin-top: 2px;
+}

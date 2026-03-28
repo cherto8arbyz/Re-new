@@ -1,0 +1,250 @@
+{
+  "info": {
+    "_postman_id": "f0e76c51-c26f-4b8b-9344-8799c88d2c14",
+    "name": "Re:new VTON MVP",
+    "description": "MVP flow for local upload, async VTON generation, and polling. Import into Postman and run requests in order.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://127.0.0.1:8000"
+    },
+    {
+      "key": "user_image_url",
+      "value": ""
+    },
+    {
+      "key": "garment_image_url",
+      "value": ""
+    },
+    {
+      "key": "job_id",
+      "value": ""
+    },
+    {
+      "key": "job_status",
+      "value": ""
+    },
+    {
+      "key": "result_image_url",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "Health",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/health",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "health"
+          ]
+        },
+        "description": "Quick smoke check that the FastAPI backend is running."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Health responds 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload User Image",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": []
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/upload",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "upload"
+          ]
+        },
+        "description": "Select the user photo in the file field. The returned URL is stored into {{user_image_url}}."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Upload user image responds 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const json = pm.response.json();",
+              "pm.test('Upload user image returns URL', function () {",
+              "  pm.expect(json.url).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.collectionVariables.set('user_image_url', json.url);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload Garment Image",
+      "request": {
+        "method": "POST",
+        "header": [],
+        "body": {
+          "mode": "formdata",
+          "formdata": [
+            {
+              "key": "file",
+              "type": "file",
+              "src": []
+            }
+          ]
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/upload",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "upload"
+          ]
+        },
+        "description": "Select the garment image in the file field. The returned URL is stored into {{garment_image_url}}."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Upload garment image responds 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const json = pm.response.json();",
+              "pm.test('Upload garment image returns URL', function () {",
+              "  pm.expect(json.url).to.be.a('string').and.not.empty;",
+              "});",
+              "pm.collectionVariables.set('garment_image_url', json.url);"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Generate Look",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"user_image_url\": \"{{user_image_url}}\",\n  \"garment_image_url\": \"{{garment_image_url}}\"\n}"
+        },
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/generate-look",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "generate-look"
+          ]
+        },
+        "description": "Creates the async generation job. This should return immediately with job_id and status=pending."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Generate look responds 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const json = pm.response.json();",
+              "pm.test('Generate look returns job id and pending status', function () {",
+              "  pm.expect(json.job_id).to.be.a('string').and.not.empty;",
+              "  pm.expect(json.status).to.eql('pending');",
+              "});",
+              "pm.collectionVariables.set('job_id', json.job_id);",
+              "pm.collectionVariables.set('job_status', json.status);",
+              "pm.test('Generate look is non-blocking', function () {",
+              "  pm.expect(pm.response.responseTime).to.be.below(1000);",
+              "});"
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "Poll Job Status",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/api/v1/jobs/{{job_id}}",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            "api",
+            "v1",
+            "jobs",
+            "{{job_id}}"
+          ]
+        },
+        "description": "Run this request every 5 seconds until status becomes completed or failed."
+      },
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Poll job responds 200', function () {",
+              "  pm.response.to.have.status(200);",
+              "});",
+              "const json = pm.response.json();",
+              "pm.collectionVariables.set('job_status', json.status || '');",
+              "pm.collectionVariables.set('result_image_url', json.result_image_url || json.result_url || '');",
+              "pm.test('Poll job returns a valid status', function () {",
+              "  pm.expect(['pending', 'processing', 'completed', 'failed']).to.include(json.status);",
+              "});"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}
