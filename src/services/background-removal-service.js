@@ -1,4 +1,5 @@
 import { readConfig } from '../api/backend-config.js';
+import { resolveBackendBaseUrl } from '../shared/backend-base-url.js';
 
 const DEFAULT_BG_REMOVAL_URL = 'https://api.remove.bg/v1.0/removebg';
 const DEFAULT_TIMEOUT_MS = 30000;
@@ -212,7 +213,10 @@ async function requestExternalBackgroundRemoval(dataUrl, options) {
  * @returns {Promise<{ success: boolean, backgroundRemoved: boolean, imageDataUrl: string, provider: string, error?: string | null }>}
  */
 async function requestImagePipelineBackgroundRemoval(dataUrl, timeoutMs) {
-  const baseUrl = readConfig('IMAGE_PIPELINE_URL', 'http://127.0.0.1:8000').replace(/\/+$/, '');
+  const baseUrl = resolveBackendBaseUrl({
+    preferProxy: false,
+    allowDevLocalFallback: true,
+  });
   if (!baseUrl) {
     return {
       success: false,

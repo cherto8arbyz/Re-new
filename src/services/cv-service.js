@@ -4,6 +4,7 @@ import { SupabaseApi } from '../api/supabase-api.js';
 import { iconForCategory } from '../models/domain-models.js';
 import { requestBackgroundRemoval } from './background-removal-service.js';
 import { createLookFaceGenerationService } from './look-face-generation-service.js';
+import { resolveBackendBaseUrl } from '../shared/backend-base-url.js';
 
 /**
  * @typedef {Object} AvatarResult
@@ -153,7 +154,6 @@ const CATEGORY_DEFAULTS = {
 const SUPPORTED_CATEGORIES = new Set(['base', 'shirt', 'sweater', 'outerwear', 'dress', 'accessory', 'pants', 'socks', 'shoes']);
 const AUTO_APPROVE_CONFIDENCE = 0.72;
 const MIN_CONFIDENCE_TO_KEEP = 0.45;
-const IMAGE_PIPELINE_BASE_URL = readConfig('IMAGE_PIPELINE_URL', 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const IMAGE_PIPELINE_TIMEOUT_MS = 30000;
 const lookFaceGenerationService = createLookFaceGenerationService();
 const INVALID_FASHION_KEYWORDS = /\b(selfie|portrait|face only|face closeup|full person|person|interior|living room|bedroom|kitchen|room|pet|dog|cat|food|meal|landscape|mountain|beach|sunset|screenshot|screen grab|keyboard|monitor|mug|bottle)\b/i;
@@ -2324,7 +2324,12 @@ async function detectFaceWithMediaPipeApi(dataUrl) {
  * @returns {Promise<{ success: boolean, data?: Record<string, any>, error?: string }>}
  */
 async function postImagePipeline(path, dataUrl) {
-  if (!IMAGE_PIPELINE_BASE_URL) {
+  const baseUrl = resolveBackendBaseUrl({
+    preferProxy: false,
+    allowDevLocalFallback: true,
+  });
+
+  if (!baseUrl) {
     return { success: false, error: 'IMAGE_PIPELINE_URL is not configured.' };
   }
 
@@ -2343,7 +2348,7 @@ async function postImagePipeline(path, dataUrl) {
   if (controller) timeoutId = setTimeout(() => controller.abort(), IMAGE_PIPELINE_TIMEOUT_MS);
 
   try {
-    const res = await fetch(`${IMAGE_PIPELINE_BASE_URL}/api/image/${path}`, {
+    const res = await fetch(`${baseUrl}/api/image/${path}`, {
       method: 'POST',
       body: form,
       signal: controller?.signal,
@@ -2372,14 +2377,14 @@ async function postImagePipeline(path, dataUrl) {
     if (isTimeout) {
       return {
         success: false,
-        error: `Image pipeline request timed out after ${IMAGE_PIPELINE_TIMEOUT_MS} ms (${IMAGE_PIPELINE_BASE_URL}).`,
+        error: `Image pipeline request timed out after ${IMAGE_PIPELINE_TIMEOUT_MS} ms (${baseUrl}).`,
       };
     }
     if (isNetworkFail) {
       return {
         success: false,
         error: [
-          `Image pipeline is unreachable at ${IMAGE_PIPELINE_BASE_URL}.`,
+          `Image pipeline is unreachable at ${baseUrl}.`,
           'Start backend: cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8000',
         ].join(' '),
       };

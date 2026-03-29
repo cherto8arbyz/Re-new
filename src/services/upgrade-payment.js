@@ -1,7 +1,6 @@
-import { readConfig } from '../api/backend-config.js';
+import { resolveBackendBaseUrl } from '../shared/backend-base-url.js';
 
 const DEFAULT_TIMEOUT_MS = 20000;
-const DEFAULT_PIPELINE_URL = 'http://127.0.0.1:8000';
 
 /**
  * @typedef {'wardrobe' | 'ai_looks'} UpgradeContext
@@ -97,12 +96,10 @@ export async function verifyStripeUpgradePayment(input) {
  * @returns {string}
  */
 function resolveUpgradeApiBaseUrl() {
-  const rawBaseUrl = String(
-    readConfig('AI_PROXY_URL')
-    || readConfig('IMAGE_PIPELINE_URL')
-    || DEFAULT_PIPELINE_URL,
-  );
-  return rawBaseUrl.trim().replace(/\/+$/, '');
+  return resolveBackendBaseUrl({
+    preferProxy: true,
+    allowDevLocalFallback: true,
+  });
 }
 
 /**

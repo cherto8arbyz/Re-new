@@ -18,8 +18,10 @@ export const CONFIG = {
   GOOGLE_CALENDAR_ID: 'primary',
   USER_TIMEZONE: 'Europe/Minsk',
   GOOGLE_WEB_CLIENT_ID: 'your-google-web-client-id',
-  IMAGE_PIPELINE_URL: 'http://127.0.0.1:8000',
-  AI_PROXY_URL: 'http://127.0.0.1:8000',
+  // For production/web hosting set your public backend URL.
+  // For local dev you can use http://127.0.0.1:8000
+  IMAGE_PIPELINE_URL: '',
+  AI_PROXY_URL: '',
   BG_REMOVAL_API_URL: 'https://api.remove.bg/v1.0/removebg',
   BG_REMOVAL_API_KEY: '',
   BG_REMOVAL_TIMEOUT_MS: '30000',

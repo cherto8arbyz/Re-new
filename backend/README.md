@@ -48,6 +48,8 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 
 Health check endpoint: `GET /health`
 
+Cross-platform stability checklist: `docs/runtime-stability-playbook.md`
+
 ## Endpoints
 
 - `POST /api/ai/generate-content` - server-side Gemini proxy for public web builds

@@ -1,5 +1,5 @@
-import { readConfig } from '../../api/backend-config.js';
 import Constants from 'expo-constants';
+import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
 
 export type UpgradeContext = 'wardrobe' | 'ai_looks';
 
@@ -19,7 +19,6 @@ export interface VerifyStripeUpgradePaymentResult {
 }
 
 const DEFAULT_TIMEOUT_MS = 20000;
-const DEFAULT_PIPELINE_URL = 'http://127.0.0.1:8000';
 
 export async function verifyStripeUpgradePayment(
   input: VerifyStripeUpgradePaymentInput,
@@ -95,11 +94,10 @@ export async function verifyStripeUpgradePayment(
 }
 
 function resolveUpgradeApiBaseUrl(): string {
-  const rawBaseUrl = String(
-    readConfig('AI_PROXY_URL')
-    || readConfig('IMAGE_PIPELINE_URL')
-    || DEFAULT_PIPELINE_URL,
-  );
+  const rawBaseUrl = resolveBackendBaseUrl({
+    preferProxy: true,
+    allowDevLocalFallback: true,
+  });
   return rewriteLocalhostBaseUrl(rawBaseUrl)
     .trim()
     .replace(/\/+$/, '');

@@ -1,6 +1,6 @@
 import { readConfig } from '../api/backend-config.js';
+import { resolveBackendBaseUrl } from '../shared/backend-base-url.js';
 
-const DEFAULT_PIPELINE_URL = readConfig('IMAGE_PIPELINE_URL', 'http://127.0.0.1:8000').replace(/\/+$/, '');
 const LOOK_FACE_PROVIDER = readConfig('LOOK_FACE_PROVIDER', 'image_pipeline').toLowerCase();
 const LOOK_FACE_TIMEOUT_MS = 45000;
 
@@ -58,7 +58,7 @@ export function createLookFaceGenerationService() {
  */
 function createProvider() {
   if (LOOK_FACE_PROVIDER === 'image_pipeline') {
-    return new ImagePipelineLookFaceProvider(DEFAULT_PIPELINE_URL);
+    return new ImagePipelineLookFaceProvider();
   }
 
   // Integration point for future providers (for example clipdrop/openai/etc.).
@@ -67,18 +67,15 @@ function createProvider() {
 
 class ImagePipelineLookFaceProvider {
   /**
-   * @param {string} baseUrl
-   */
-  constructor(baseUrl) {
-    this.baseUrl = baseUrl;
-  }
-
-  /**
    * @param {LookFaceGenerationInput} input
    * @returns {Promise<LookFaceGenerationOutput>}
    */
   async generate(input) {
-    if (!this.baseUrl) {
+    const baseUrl = resolveBackendBaseUrl({
+      preferProxy: false,
+      allowDevLocalFallback: true,
+    });
+    if (!baseUrl) {
       return {
         success: false,
         imageDataUrl: '',
@@ -111,7 +108,7 @@ class ImagePipelineLookFaceProvider {
     if (controller) timeoutId = setTimeout(() => controller.abort(), LOOK_FACE_TIMEOUT_MS);
 
     try {
-      const res = await fetch(`${this.baseUrl}/api/image/look-face-generate`, {
+      const res = await fetch(`${baseUrl}/api/image/look-face-generate`, {
         method: 'POST',
         body: form,
         signal: controller?.signal,

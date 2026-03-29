@@ -30,6 +30,7 @@
     "android": "expo start --android",
     "ios": "expo start --ios",
     "web": "expo start --web",
+    "verify:web-env": "node scripts/verify-web-env.mjs",
     "build:web": "npx expo export --platform web --output-dir dist",
     "preview:web": "npx serve . --listen 3000",
     "dev": "npm run preview:web",

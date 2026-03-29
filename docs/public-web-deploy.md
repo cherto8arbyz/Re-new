@@ -82,6 +82,14 @@ Output directory:
 
 `dist`
 
+Validation command (recommended before deploy):
+
+`npm run verify:web-env`
+
+Detailed parity/stability checklist:
+
+`docs/runtime-stability-playbook.md`
+
 ## 3. Suggested hosting split
 
 - Frontend: Vercel or Netlify
