@@ -41,9 +41,10 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 2. Set service `Root Directory` to `backend`.
 3. Enable a public domain.
 4. Set required env vars: `GEMINI_API_KEY`, and `REMOVE_BG_API_KEY` or `CLIPDROP_API_KEY`.
-5. For fal.ai generation also set: `AI_GENERATION_PROVIDER=fal`, `FAL_KEY`, `FAL_MODEL_ID` (optional override).
-6. Optionally set `DATABASE_URL` to Railway Postgres.
-7. Use `backend/.env.railway.example` to copy variables line-by-line.
+5. Set Stripe vars for paid unlock verification: `STRIPE_SECRET_KEY` (required), optionally `STRIPE_WARDROBE_UPGRADE_PAYMENT_LINK_URL` and `STRIPE_AI_LOOKS_UPGRADE_PAYMENT_LINK_URL`.
+6. For fal.ai generation also set: `AI_GENERATION_PROVIDER=fal`, `FAL_KEY`, `FAL_MODEL_ID` (optional override).
+7. Optionally set `DATABASE_URL` to Railway Postgres.
+8. Use `backend/.env.railway.example` to copy variables line-by-line.
 
 Health check endpoint: `GET /health`
 

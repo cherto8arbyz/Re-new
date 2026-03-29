@@ -18,6 +18,7 @@ Required backend environment variables:
 
 - `GEMINI_API_KEY` (Gemini proxy endpoint)
 - `REMOVE_BG_API_KEY` or `CLIPDROP_API_KEY` (background removal provider)
+- `STRIPE_SECRET_KEY` (required for payment verification and unlocking paid limits)
 
 Optional backend environment variables:
 
@@ -27,6 +28,8 @@ Optional backend environment variables:
 - `PORT=8000`
 - `PUBLIC_BASE_URL=https://<your-railway-domain>` (if not set, request base URL is used)
 - `DATABASE_URL=...` (Railway Postgres plugin connection string)
+- `STRIPE_WARDROBE_UPGRADE_PAYMENT_LINK_URL=https://buy.stripe.com/test_9B65kw1kzgrG8WB3Xu04800`
+- `STRIPE_AI_LOOKS_UPGRADE_PAYMENT_LINK_URL=https://buy.stripe.com/test_9B65kw1kzgrG8WB3Xu04800`
 
 Health check:
 
@@ -64,6 +67,12 @@ Optional public variables:
 - `EXPO_PUBLIC_OPENWEATHER_API_KEY`
 
 Avoid exposing `EXPO_PUBLIC_GEMINI_API_KEY` in a public production build when the backend proxy is available.
+
+Important for Vercel:
+
+- Do not leave `EXPO_PUBLIC_IMAGE_PIPELINE_URL` empty.
+- Do not point it to `127.0.0.1` in production.
+- After changing any Vercel env var, trigger a fresh redeploy so the exported web bundle picks up new values.
 
 Build command:
 

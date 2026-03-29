@@ -3,6 +3,7 @@ import { resolveVisualAssetUrl } from '../models/garment-presentation.js';
 import { extractWardrobeFromUpload } from '../services/cv-service.js';
 import { addWardrobeItem, removeWardrobeItem } from '../state/actions.js';
 import { getGeminiService } from '../services/gemini-provider.js';
+import { verifyStripeUpgradePayment } from '../services/upgrade-payment.js';
 import {
   EXPANDED_WARDROBE_LIMIT,
   FREE_WARDROBE_LIMIT,
@@ -10,11 +11,17 @@ import {
   WARDROBE_UPGRADE_PRICE_USD,
   UPGRADE_CONTEXT_WARDROBE,
   buildUpgradePendingContextStorageKey,
+  buildUpgradePendingPaymentStorageKey,
+  buildStripeCheckoutUrl,
   buildWardrobeUpgradeStorageKey,
+  createPendingUpgradePaymentRecord,
+  createUpgradeCheckoutReferenceId,
   extractUpgradeTargetFromUrl,
   getWardrobeLimit,
+  isPendingUpgradePaymentExpired,
   isUpgradeSuccessUrl,
   isWardrobeUpgradeStoredValue,
+  parsePendingUpgradePayment,
 } from '../shared/wardrobe-upgrade.js';
 
 /** @type {Record<string, string>} */
@@ -28,6 +35,9 @@ const CATEGORY_LABELS = {
   shoes: 'Shoes',
   accessory: 'Accessories',
 };
+
+const WARDROBE_CHECKOUT_IS_STRIPE_TEST = /buy\.stripe\.com\/test_/i.test(STRIPE_WARDROBE_UPGRADE_URL);
+const STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS = 12000;
 
 /**
  * Wardrobe Management Screen вЂ” view, add, remove garments.
@@ -45,8 +55,12 @@ export class WardrobeScreen {
     this.showUpgradeModal = false;
     this.upgradeNotice = '';
     this.wardrobeUpgradeUnlocked = false;
+    this.upgradeVerificationInFlight = false;
     this.consumeUpgradeSuccessFromUrl();
     this.loadWardrobeUpgradeState();
+    this.markPendingUpgradeAsReturnedToApp();
+    void this.verifyPendingUpgradePayment('initial');
+    this.attachUpgradeVerificationListeners();
     this.consumePendingAddMode();
     this.render(store.getState());
     this.unsubscribe = this.store.subscribe(state => this.render(state));
@@ -283,14 +297,47 @@ export class WardrobeScreen {
 
     const payUpgradeBtn = this.container.querySelector('#wr-upgrade-pay');
     payUpgradeBtn?.addEventListener('click', () => {
-      this.upgradeNotice = 'Complete Stripe checkout and return to the app.';
-      if (typeof localStorage !== 'undefined') {
+      void (async () => {
+        const existingPending = parsePendingUpgradePayment(localStorage.getItem(this.getPendingUpgradePaymentStorageKey()));
+        if (
+          existingPending
+          && existingPending.context === UPGRADE_CONTEXT_WARDROBE
+          && !isPendingUpgradePaymentExpired(existingPending)
+          && Date.now() - existingPending.createdAt >= 12000
+        ) {
+          const resolved = await this.verifyPendingUpgradePayment('return');
+          if (resolved) return;
+        }
+
+        const state = this.store.getState();
+        const userId = state.authSession?.user?.id || state.user?.id || 'anonymous';
+        const userEmail = state.authSession?.user?.email || '';
+        const referenceId = createUpgradeCheckoutReferenceId(userId, UPGRADE_CONTEXT_WARDROBE);
+        const pendingPayment = createPendingUpgradePaymentRecord({
+          context: UPGRADE_CONTEXT_WARDROBE,
+          referenceId,
+          createdAt: Date.now(),
+          customerEmail: userEmail,
+        });
+        if (!pendingPayment) {
+          this.openUpgradeModal('Could not prepare checkout session.');
+          return;
+        }
+
+        const checkoutUrl = buildStripeCheckoutUrl(STRIPE_WARDROBE_UPGRADE_URL, {
+          referenceId: pendingPayment.referenceId,
+          customerEmail: pendingPayment.customerEmail || userEmail,
+        });
+
+        this.upgradeNotice = 'Complete Stripe checkout and return to the app.';
         localStorage.setItem(this.getPendingUpgradeContextStorageKey(), UPGRADE_CONTEXT_WARDROBE);
-      }
-      this.render(this.store.getState());
-      if (typeof window !== 'undefined') {
-        window.open(STRIPE_WARDROBE_UPGRADE_URL, '_blank', 'noopener,noreferrer');
-      }
+        localStorage.setItem(this.getPendingUpgradePaymentStorageKey(), JSON.stringify(pendingPayment));
+        this.render(this.store.getState());
+
+        if (typeof window !== 'undefined') {
+          window.open(checkoutUrl || STRIPE_WARDROBE_UPGRADE_URL, '_blank', 'noopener,noreferrer');
+        }
+      })();
     });
 
     // Tab switching (Smart / Text / Photo)
@@ -606,6 +653,15 @@ export class WardrobeScreen {
     return buildUpgradePendingContextStorageKey(userId);
   }
 
+  /**
+   * @returns {string}
+   */
+  getPendingUpgradePaymentStorageKey() {
+    const state = this.store.getState();
+    const userId = state.authSession?.user?.id || state.user?.id || 'anonymous';
+    return buildUpgradePendingPaymentStorageKey(userId);
+  }
+
   loadWardrobeUpgradeState() {
     if (typeof localStorage === 'undefined') return;
     const raw = localStorage.getItem(this.getUpgradeStorageKey());
@@ -655,6 +711,7 @@ export class WardrobeScreen {
     this.saveWardrobeUpgradeState();
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
+      localStorage.removeItem(this.getPendingUpgradePaymentStorageKey());
     }
     this.showUpgradeModal = false;
     this.upgradeNotice = `Upgrade activated. Wardrobe limit is now ${EXPANDED_WARDROBE_LIMIT}.`;
@@ -675,11 +732,7 @@ export class WardrobeScreen {
       : pendingContext === UPGRADE_CONTEXT_WARDROBE;
     if (!shouldUnlock) return;
 
-    this.wardrobeUpgradeUnlocked = true;
-    this.saveWardrobeUpgradeState();
-    if (typeof localStorage !== 'undefined') {
-      localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
-    }
+    this.unlockWardrobeUpgrade();
     this.upgradeNotice = `Payment confirmed. Wardrobe expanded to ${EXPANDED_WARDROBE_LIMIT} items.`;
 
     try {
@@ -696,7 +749,116 @@ export class WardrobeScreen {
     }
   }
 
+  markPendingUpgradeAsReturnedToApp() {
+    if (typeof localStorage === 'undefined') return;
+
+    const pendingContext = String(localStorage.getItem(this.getPendingUpgradeContextStorageKey()) || '').trim().toLowerCase();
+    if (pendingContext !== UPGRADE_CONTEXT_WARDROBE) return;
+
+    const pendingPayment = parsePendingUpgradePayment(localStorage.getItem(this.getPendingUpgradePaymentStorageKey()));
+    if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_WARDROBE || pendingPayment.returnedToApp) return;
+
+    const nextPending = createPendingUpgradePaymentRecord({
+      context: pendingPayment.context,
+      referenceId: pendingPayment.referenceId,
+      createdAt: pendingPayment.createdAt,
+      customerEmail: pendingPayment.customerEmail || '',
+      returnedToApp: true,
+    });
+    if (!nextPending) return;
+
+    localStorage.setItem(this.getPendingUpgradePaymentStorageKey(), JSON.stringify(nextPending));
+  }
+
+  /**
+   * @param {'initial' | 'return' | 'deeplink'} [source]
+   * @returns {Promise<boolean>}
+   */
+  async verifyPendingUpgradePayment(source = 'initial') {
+    if (typeof localStorage === 'undefined') return false;
+    if (this.upgradeVerificationInFlight) return false;
+    this.upgradeVerificationInFlight = true;
+
+    try {
+      const pendingContext = String(localStorage.getItem(this.getPendingUpgradeContextStorageKey()) || '').trim().toLowerCase();
+      if (pendingContext !== UPGRADE_CONTEXT_WARDROBE) return false;
+
+      const pendingPayment = parsePendingUpgradePayment(localStorage.getItem(this.getPendingUpgradePaymentStorageKey()));
+      if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_WARDROBE) {
+        localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
+        localStorage.removeItem(this.getPendingUpgradePaymentStorageKey());
+        return false;
+      }
+
+      if (isPendingUpgradePaymentExpired(pendingPayment)) {
+        localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
+        localStorage.removeItem(this.getPendingUpgradePaymentStorageKey());
+        return false;
+      }
+
+      const state = this.store.getState();
+      const userEmail = state.authSession?.user?.email || '';
+      const verification = await verifyStripeUpgradePayment({
+        context: UPGRADE_CONTEXT_WARDROBE,
+        referenceId: pendingPayment.referenceId,
+        customerEmail: pendingPayment.customerEmail || userEmail,
+        createdAfter: Math.max(0, Math.floor((pendingPayment.createdAt - (10 * 60 * 1000)) / 1000)),
+      });
+
+      if (verification.paid) {
+        this.unlockWardrobeUpgrade();
+        return true;
+      }
+
+      const allowTestFallbackUnlock = WARDROBE_CHECKOUT_IS_STRIPE_TEST
+        && !verification.configured
+        && pendingPayment.returnedToApp
+        && (Date.now() - pendingPayment.createdAt) >= STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS;
+      if (allowTestFallbackUnlock) {
+        this.unlockWardrobeUpgrade();
+        return true;
+      }
+
+      if (source !== 'initial') {
+        if (!verification.configured) {
+          this.openUpgradeModal('Payment verification is unavailable right now.');
+        } else {
+          this.openUpgradeModal('Payment is not confirmed yet. Complete checkout and return to the app.');
+        }
+      }
+
+      return false;
+    } finally {
+      this.upgradeVerificationInFlight = false;
+    }
+  }
+
+  attachUpgradeVerificationListeners() {
+    if (typeof window !== 'undefined') {
+      this.onWindowFocus = () => {
+        this.markPendingUpgradeAsReturnedToApp();
+        void this.verifyPendingUpgradePayment('return');
+      };
+      window.addEventListener('focus', this.onWindowFocus);
+    }
+
+    if (typeof document !== 'undefined') {
+      this.onVisibilityChange = () => {
+        if (document.visibilityState !== 'visible') return;
+        this.markPendingUpgradeAsReturnedToApp();
+        void this.verifyPendingUpgradePayment('return');
+      };
+      document.addEventListener('visibilitychange', this.onVisibilityChange);
+    }
+  }
+
   destroy() {
+    if (typeof window !== 'undefined' && this.onWindowFocus) {
+      window.removeEventListener('focus', this.onWindowFocus);
+    }
+    if (typeof document !== 'undefined' && this.onVisibilityChange) {
+      document.removeEventListener('visibilitychange', this.onVisibilityChange);
+    }
     this.unsubscribe?.();
   }
 

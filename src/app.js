@@ -55,18 +55,27 @@ import {
   buildAiLookUpgradeStorageKey,
   buildAiLookUsageStorageKey,
   buildUpgradePendingContextStorageKey,
+  buildUpgradePendingPaymentStorageKey,
+  buildStripeCheckoutUrl,
+  createPendingUpgradePaymentRecord,
+  createUpgradeCheckoutReferenceId,
   extractUpgradeTargetFromUrl,
   getAiLookLimit,
+  isPendingUpgradePaymentExpired,
   isUpgradeSuccessUrl,
   isWardrobeUpgradeStoredValue,
+  parsePendingUpgradePayment,
   parseUsageCount,
 } from './shared/wardrobe-upgrade.js';
+import { verifyStripeUpgradePayment } from './services/upgrade-payment.js';
 import { installMobileLayout } from './utils/mobile-layout.js';
 import { initSimulator } from '../dev_preview/simulator.js';
 
 const ONBOARDING_KEY_PREFIX = 'renew_onboarding_';
 const USER_PROFILE_PREFIX = 'renew_user_';
 const USER_CONTEXT_PREFIX = 'renew_context_';
+const AI_LOOKS_CHECKOUT_IS_STRIPE_TEST = /buy\.stripe\.com\/test_/i.test(STRIPE_AI_LOOK_UPGRADE_URL);
+const STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS = 12000;
 
 const PAGE_STUBS = {
   history: {
@@ -268,14 +277,108 @@ async function showMainApp(screen, authService, session) {
   const aiUpgradeStorageKey = buildAiLookUpgradeStorageKey(session.user.id);
   const aiUsageStorageKey = buildAiLookUsageStorageKey(session.user.id);
   const pendingUpgradeContextStorageKey = buildUpgradePendingContextStorageKey(session.user.id);
+  const pendingUpgradePaymentStorageKey = buildUpgradePendingPaymentStorageKey(session.user.id);
   let aiLookUpgradeUnlocked = isWardrobeUpgradeStoredValue(localStorage.getItem(aiUpgradeStorageKey));
   let aiLookUsageCount = parseUsageCount(localStorage.getItem(aiUsageStorageKey));
+  let aiUpgradeVerificationInFlight = false;
 
   const getAiGenerationLimit = () => getAiLookLimit(aiLookUpgradeUnlocked);
 
   const saveAiLookUsageState = () => {
     localStorage.setItem(aiUpgradeStorageKey, aiLookUpgradeUnlocked ? 'expanded' : 'free');
     localStorage.setItem(aiUsageStorageKey, String(aiLookUsageCount));
+  };
+
+  /**
+   * @param {string} [note]
+   */
+  const unlockAiLookUpgrade = (note = '') => {
+    aiLookUpgradeUnlocked = true;
+    localStorage.removeItem(pendingUpgradeContextStorageKey);
+    localStorage.removeItem(pendingUpgradePaymentStorageKey);
+    saveAiLookUsageState();
+    closeAiUpgradeModal();
+    if (note) {
+      window.setTimeout(() => openAiUpgradeModal(note), 0);
+    }
+  };
+
+  const markPendingAiUpgradeAsReturnedToApp = () => {
+    const pendingContext = String(localStorage.getItem(pendingUpgradeContextStorageKey) || '').trim().toLowerCase();
+    if (pendingContext !== UPGRADE_CONTEXT_AI_LOOKS) return;
+
+    const pendingPayment = parsePendingUpgradePayment(localStorage.getItem(pendingUpgradePaymentStorageKey));
+    if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_AI_LOOKS || pendingPayment.returnedToApp) return;
+
+    const nextPending = createPendingUpgradePaymentRecord({
+      context: pendingPayment.context,
+      referenceId: pendingPayment.referenceId,
+      createdAt: pendingPayment.createdAt,
+      customerEmail: pendingPayment.customerEmail || '',
+      returnedToApp: true,
+    });
+    if (!nextPending) return;
+
+    localStorage.setItem(pendingUpgradePaymentStorageKey, JSON.stringify(nextPending));
+  };
+
+  /**
+   * @param {'initial' | 'return' | 'deeplink'} [source]
+   * @returns {Promise<boolean>}
+   */
+  const verifyPendingAiUpgradePayment = async (source = 'initial') => {
+    if (aiUpgradeVerificationInFlight) return false;
+    aiUpgradeVerificationInFlight = true;
+
+    try {
+      const pendingContext = String(localStorage.getItem(pendingUpgradeContextStorageKey) || '').trim().toLowerCase();
+      if (pendingContext !== UPGRADE_CONTEXT_AI_LOOKS) return false;
+
+      const pendingPayment = parsePendingUpgradePayment(localStorage.getItem(pendingUpgradePaymentStorageKey));
+      if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_AI_LOOKS) {
+        localStorage.removeItem(pendingUpgradeContextStorageKey);
+        localStorage.removeItem(pendingUpgradePaymentStorageKey);
+        return false;
+      }
+
+      if (isPendingUpgradePaymentExpired(pendingPayment)) {
+        localStorage.removeItem(pendingUpgradeContextStorageKey);
+        localStorage.removeItem(pendingUpgradePaymentStorageKey);
+        return false;
+      }
+
+      const verification = await verifyStripeUpgradePayment({
+        context: UPGRADE_CONTEXT_AI_LOOKS,
+        referenceId: pendingPayment.referenceId,
+        customerEmail: pendingPayment.customerEmail || session.user.email || '',
+        createdAfter: Math.max(0, Math.floor((pendingPayment.createdAt - (10 * 60 * 1000)) / 1000)),
+      });
+
+      if (verification.paid) {
+        unlockAiLookUpgrade();
+        return true;
+      }
+
+      const allowTestFallbackUnlock = AI_LOOKS_CHECKOUT_IS_STRIPE_TEST
+        && !verification.configured
+        && pendingPayment.returnedToApp
+        && (Date.now() - pendingPayment.createdAt) >= STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS;
+      if (allowTestFallbackUnlock) {
+        unlockAiLookUpgrade();
+        return true;
+      }
+
+      if (source !== 'initial') {
+        if (!verification.configured) {
+          openAiUpgradeModal('Payment verification is unavailable right now.');
+        } else {
+          openAiUpgradeModal('Payment is not confirmed yet. Complete checkout and return to the app.');
+        }
+      }
+      return false;
+    } finally {
+      aiUpgradeVerificationInFlight = false;
+    }
   };
 
   const closeAiUpgradeModal = () => {
@@ -311,9 +414,40 @@ async function showMainApp(screen, authService, session) {
       closeAiUpgradeModal();
     });
     modal.querySelector('#ai-upgrade-pay')?.addEventListener('click', () => {
-      localStorage.setItem(pendingUpgradeContextStorageKey, UPGRADE_CONTEXT_AI_LOOKS);
-      closeAiUpgradeModal();
-      window.open(STRIPE_AI_LOOK_UPGRADE_URL, '_blank', 'noopener,noreferrer');
+      void (async () => {
+        const existingPending = parsePendingUpgradePayment(localStorage.getItem(pendingUpgradePaymentStorageKey));
+        if (
+          existingPending
+          && existingPending.context === UPGRADE_CONTEXT_AI_LOOKS
+          && !isPendingUpgradePaymentExpired(existingPending)
+          && Date.now() - existingPending.createdAt >= 12000
+        ) {
+          const resolved = await verifyPendingAiUpgradePayment('return');
+          if (resolved) return;
+        }
+
+        const referenceId = createUpgradeCheckoutReferenceId(session.user.id, UPGRADE_CONTEXT_AI_LOOKS);
+        const pendingPayment = createPendingUpgradePaymentRecord({
+          context: UPGRADE_CONTEXT_AI_LOOKS,
+          referenceId,
+          createdAt: Date.now(),
+          customerEmail: session.user.email || '',
+        });
+        if (!pendingPayment) {
+          openAiUpgradeModal('Could not prepare checkout session.');
+          return;
+        }
+
+        const checkoutUrl = buildStripeCheckoutUrl(STRIPE_AI_LOOK_UPGRADE_URL, {
+          referenceId: pendingPayment.referenceId,
+          customerEmail: pendingPayment.customerEmail || session.user.email || '',
+        });
+
+        localStorage.setItem(pendingUpgradeContextStorageKey, UPGRADE_CONTEXT_AI_LOOKS);
+        localStorage.setItem(pendingUpgradePaymentStorageKey, JSON.stringify(pendingPayment));
+        closeAiUpgradeModal();
+        window.open(checkoutUrl || STRIPE_AI_LOOK_UPGRADE_URL, '_blank', 'noopener,noreferrer');
+      })();
     });
   };
 
@@ -328,9 +462,7 @@ async function showMainApp(screen, authService, session) {
       : pendingContext === UPGRADE_CONTEXT_AI_LOOKS;
     if (!shouldUnlock) return;
 
-    aiLookUpgradeUnlocked = true;
-    localStorage.removeItem(pendingUpgradeContextStorageKey);
-    saveAiLookUsageState();
+    unlockAiLookUpgrade();
 
     try {
       const parsed = new URL(currentUrl);
@@ -350,6 +482,22 @@ async function showMainApp(screen, authService, session) {
   };
 
   consumeAiUpgradeSuccessFromUrl();
+  void verifyPendingAiUpgradePayment('initial');
+  markPendingAiUpgradeAsReturnedToApp();
+
+  if (typeof window !== 'undefined') {
+    window.addEventListener('focus', () => {
+      markPendingAiUpgradeAsReturnedToApp();
+      void verifyPendingAiUpgradePayment('return');
+    });
+  }
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState !== 'visible') return;
+      markPendingAiUpgradeAsReturnedToApp();
+      void verifyPendingAiUpgradePayment('return');
+    });
+  }
 
   const savedUserRaw = localStorage.getItem(`${USER_PROFILE_PREFIX}${session.user.id}`);
   if (savedUserRaw) {

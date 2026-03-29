@@ -2,6 +2,9 @@
  * Committed runtime-safe config.
  * Local secrets should live in .env as EXPO_PUBLIC_* values.
  */
+const DEFAULT_LOCAL_PIPELINE_URL = 'http://127.0.0.1:8000';
+const IS_PRODUCTION_BUILD = String(process.env.NODE_ENV || '').trim().toLowerCase() === 'production';
+
 export const CONFIG = {
   BACKEND_PROVIDER: process.env.EXPO_PUBLIC_BACKEND_PROVIDER || 'supabase',
 
@@ -28,7 +31,7 @@ export const CONFIG = {
   USER_TIMEZONE: process.env.EXPO_PUBLIC_USER_TIMEZONE || 'Europe/Minsk',
   GOOGLE_WEB_CLIENT_ID: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '',
 
-  IMAGE_PIPELINE_URL: process.env.EXPO_PUBLIC_IMAGE_PIPELINE_URL || 'http://127.0.0.1:8000',
+  IMAGE_PIPELINE_URL: process.env.EXPO_PUBLIC_IMAGE_PIPELINE_URL || (IS_PRODUCTION_BUILD ? '' : DEFAULT_LOCAL_PIPELINE_URL),
   AI_PROXY_URL: process.env.EXPO_PUBLIC_AI_PROXY_URL || process.env.EXPO_PUBLIC_IMAGE_PIPELINE_URL || '',
   BG_REMOVAL_API_URL: process.env.EXPO_PUBLIC_BG_REMOVAL_API_URL || 'https://api.remove.bg/v1.0/removebg',
   BG_REMOVAL_API_KEY: process.env.EXPO_PUBLIC_BG_REMOVAL_API_KEY || '',
