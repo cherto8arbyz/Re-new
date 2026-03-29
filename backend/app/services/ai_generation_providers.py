@@ -47,6 +47,7 @@ class AIGenerationProvider(ABC):
     self,
     user_image_url: str,
     garment_image_url: str,
+    garment_type: str | None = None,
   ) -> VTONGenerationResult:
     """Generate a virtual try-on asset from the supplied public image URLs."""
 
@@ -86,6 +87,7 @@ class HuggingFaceVTONProvider(AIGenerationProvider):
     self,
     user_image_url: str,
     garment_image_url: str,
+    garment_type: str | None = None,
   ) -> VTONGenerationResult:
     clean_user_image_url = (user_image_url or "").strip()
     clean_garment_image_url = (garment_image_url or "").strip()
@@ -356,6 +358,7 @@ class ReplicateVTONProvider(AIGenerationProvider):
     self,
     user_image_url: str,
     garment_image_url: str,
+    garment_type: str | None = None,
   ) -> VTONGenerationResult:
     clean_user_image_url = (user_image_url or "").strip()
     clean_garment_image_url = (garment_image_url or "").strip()
@@ -533,6 +536,7 @@ class FalVTONProvider(AIGenerationProvider):
     self,
     user_image_url: str,
     garment_image_url: str,
+    garment_type: str | None = None,
   ) -> VTONGenerationResult:
     clean_user_image_url = (user_image_url or "").strip()
     clean_garment_image_url = (garment_image_url or "").strip()
@@ -548,12 +552,14 @@ class FalVTONProvider(AIGenerationProvider):
       self._generate_vton_sync,
       clean_user_image_url,
       clean_garment_image_url,
+      (garment_type or self.garment_type).strip().lower() or self.garment_type,
     )
 
   def _generate_vton_sync(
     self,
     user_image_url: str,
     garment_image_url: str,
+    garment_type: str,
   ) -> VTONGenerationResult:
     try:
       from fal_client import SyncClient
@@ -578,7 +584,7 @@ class FalVTONProvider(AIGenerationProvider):
     input_payload = {
       "human_image_url": resolved_human_url,
       "garment_image_url": resolved_garment_url,
-      "garment_type": self.garment_type,
+      "garment_type": garment_type,
       "num_inference_steps": self.num_inference_steps,
       "guidance_scale": self.guidance_scale,
       "enable_safety_checker": self.enable_safety_checker,
@@ -591,7 +597,7 @@ class FalVTONProvider(AIGenerationProvider):
       "sending_request_to_fal provider=%s model=%s garment_type=%s human_url=%s garment_url=%s",
       self.provider_name,
       self.model_id,
-      self.garment_type,
+      garment_type,
       resolved_human_url,
       resolved_garment_url,
     )

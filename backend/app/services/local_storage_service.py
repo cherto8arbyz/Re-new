@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from hashlib import sha256
 import mimetypes
 from pathlib import Path
 import shutil
@@ -44,6 +45,37 @@ class LocalStorageService:
       public_url=self._build_public_url(base_url, file_name),
     )
 
+  def replace_identity_references(
+    self,
+    user_id: str,
+    image_bytes_list: list[bytes],
+    base_url: str,
+  ) -> list[StoredAsset]:
+    safe_user_dir_name = f"identity-{sha256(user_id.encode('utf-8')).hexdigest()[:24]}"
+    relative_dir = Path("identity") / safe_user_dir_name
+    user_dir = (self.uploads_dir / relative_dir).resolve()
+    self._assert_path_is_within_uploads(user_dir)
+
+    if user_dir.exists():
+      shutil.rmtree(user_dir)
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    stored_assets: list[StoredAsset] = []
+    for index, image_bytes in enumerate(image_bytes_list, start=1):
+      file_name = f"reference-{index:02d}.webp"
+      file_path = user_dir / file_name
+      file_path.write_bytes(image_bytes)
+      relative_asset_path = (relative_dir / file_name).as_posix()
+      stored_assets.append(
+        StoredAsset(
+          file_path=file_path,
+          file_name=relative_asset_path,
+          public_url=self._build_public_url(base_url, relative_asset_path),
+        )
+      )
+
+    return stored_assets
+
   def save_generated_asset(
     self,
     source_reference: str,
@@ -73,8 +105,12 @@ class LocalStorageService:
   def resolve_provider_input_reference(self, reference: str) -> str:
     parsed = urlparse(reference or "")
     if parsed.scheme in {"http", "https"} and parsed.path.startswith("/static/uploads/"):
-      file_name = Path(parsed.path).name
-      candidate = self.uploads_dir / file_name
+      relative_asset_path = parsed.path.removeprefix("/static/uploads/").lstrip("/")
+      candidate = (self.uploads_dir / Path(relative_asset_path)).resolve()
+      try:
+        self._assert_path_is_within_uploads(candidate)
+      except ValueError:
+        return reference
       if candidate.exists():
         return str(candidate)
 
@@ -99,3 +135,9 @@ class LocalStorageService:
   def _is_http_url(self, value: str) -> bool:
     lowered = (value or "").lower()
     return lowered.startswith("http://") or lowered.startswith("https://")
+
+  def _assert_path_is_within_uploads(self, target_path: Path) -> None:
+    uploads_root = self.uploads_dir.resolve()
+    if uploads_root == target_path or uploads_root in target_path.parents:
+      return
+    raise ValueError(f"Refusing to write outside uploads directory: {target_path}")

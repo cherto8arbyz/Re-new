@@ -4,7 +4,9 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { useAppContext } from '../context/AppContext';
+import { DailyLookScreen } from '../screens/DailyLookScreen';
 import { HomeScreen } from '../screens/HomeScreen';
+import { IdentityCaptureScreen } from '../screens/IdentityCaptureScreen';
 import { OnboardingScreen } from '../screens/OnboardingScreen';
 import type { RootStackParamList } from './types';
 
@@ -25,7 +27,11 @@ export function AppNavigator() {
     <NavigationContainer>
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {state.user?.onboardingComplete ? (
-          <Stack.Screen name="Home" component={HomeScreen} />
+          <>
+            <Stack.Screen name="Home" component={HomeScreen} />
+            <Stack.Screen name="IdentityCapture" component={IdentityCaptureScreen} />
+            <Stack.Screen name="DailyLook" component={DailyLookScreen} />
+          </>
         ) : (
           <Stack.Screen name="Onboarding" component={OnboardingScreen} />
         )}

@@ -10,9 +10,10 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from .auth import AuthenticatedUser, get_authenticated_user
 from .db import SessionLocal, get_db_session, init_db
 from .models import GenerationJob
 from .services.ai_generation_providers import (
@@ -25,14 +26,29 @@ from .services.ai_generation_providers import (
 from .services.fal_base_generation import FalBaseGenerationProvider
 from .services.fal_face_swap import FalFaceSwapProvider
 from .services.fal_upscale import FalUpscaleProvider
-from .services.full_pipeline_service import FullLookPipelineService, LookGenerationRequest
+from .services.full_pipeline_service import (
+  FullLookPipelineRequest,
+  FullLookPipelineService,
+  LookGenerationRequest,
+  PipelineGarment,
+)
 from .services.background_removal_providers import ClipdropProvider, RemoveBgProvider
 from .services.background_removal_service import BackgroundRemovalService
+from .services.daily_look_job_service import DailyLookJobService
 from .services.face_detection_service import FaceDetectionService
 from .services.gemini_proxy_service import GeminiProxyService
+from .services.identity_reference_service import (
+  IdentityReferenceCountError,
+  IdentityReferenceService,
+  IdentityReferenceUploadItem,
+  IdentityReferenceValidationError,
+)
 from .services.local_storage_service import LocalStorageService, STATIC_DIR
 from .services.look_face_generation_service import LookFaceGenerationService
+from .services.outfit_recommendation_service import OutfitRecommendationService
+from .services.prompt_builder_service import PromptBuilderService
 from .services.stripe_upgrade_service import StripeUpgradeService
+from .services.user_profile_service import UserProfileService
 from .services.vton_job_service import VTONJobService
 from .settings import settings
 
@@ -75,11 +91,24 @@ background_service = BackgroundRemovalService(
 face_service = FaceDetectionService()
 look_face_service = LookFaceGenerationService()
 gemini_proxy_service = GeminiProxyService(settings.gemini_api_key)
+prompt_builder_service = PromptBuilderService(gemini_proxy_service)
 storage_service = LocalStorageService()
+user_profile_service = UserProfileService(session_factory=SessionLocal)
+outfit_recommendation_service = OutfitRecommendationService()
+identity_reference_service = IdentityReferenceService(
+  face_detection_service=face_service,
+  storage_service=storage_service,
+)
 vton_job_service = VTONJobService(
   session_factory=SessionLocal,
   storage_service=storage_service,
   provider_factory=lambda: _build_vton_provider(),
+)
+daily_look_job_service = DailyLookJobService(
+  session_factory=SessionLocal,
+  storage_service=storage_service,
+  user_profile_service=user_profile_service,
+  pipeline_factory=lambda: _build_daily_look_pipeline(),
 )
 stripe_upgrade_services = {
   "wardrobe": StripeUpgradeService(
@@ -97,6 +126,11 @@ stripe_upgrade_services = {
 
 class UploadResponse(BaseModel):
   url: str
+
+
+class IdentityUploadResponse(BaseModel):
+  uploaded_count: int
+  reference_urls: list[str]
 
 
 class FullLookGenerateRequest(BaseModel):
@@ -152,6 +186,50 @@ class StripeUpgradeVerifyResponse(BaseModel):
   configured: bool
   session_id: str | None = None
   reason: str | None = None
+
+
+class DailyLookWeatherContext(BaseModel):
+  temperature_celsius: float
+  condition: str | None = None
+  summary: str | None = None
+  precipitation: str | None = None
+  is_raining: bool = False
+  is_snowing: bool = False
+  location: str | None = None
+  season: str | None = None
+
+
+class DailyLookGarmentInput(BaseModel):
+  garment_id: str = Field(min_length=1)
+  image_url: str = Field(min_length=1)
+  category: str = Field(min_length=1)
+  name: str | None = None
+  color: str | None = None
+
+
+class DailyLookGenerateRequest(BaseModel):
+  gender: str = "female"
+  weather_context: DailyLookWeatherContext
+  available_garments: list[DailyLookGarmentInput] = Field(default_factory=list)
+
+
+class DailyLookGenerateResponse(BaseModel):
+  job_id: str
+  status: str
+  selected_garment_ids: list[str]
+
+
+class DailyLookJobResponse(BaseModel):
+  id: str
+  user_id: str
+  status: str
+  selected_garment_ids: list[str]
+  weather_context: dict[str, Any]
+  prompt: str | None = None
+  final_image_url: str | None = None
+  error_message: str | None = None
+  created_at: datetime
+  completed_at: datetime | None = None
 
 
 @app.on_event("startup")
@@ -236,6 +314,53 @@ async def upload_image(
   return UploadResponse(url=stored_asset.public_url)
 
 
+@app.post("/api/v1/identity/upload-reference", response_model=IdentityUploadResponse)
+async def upload_identity_reference_images(
+  request: Request,
+  files: list[UploadFile] = File(...),
+  current_user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> IdentityUploadResponse:
+  upload_items: list[IdentityReferenceUploadItem] = []
+  for index, file in enumerate(files):
+    file_bytes = await file.read()
+    upload_items.append(
+      IdentityReferenceUploadItem(
+        index=index,
+        file_bytes=file_bytes,
+        filename=file.filename or f"identity-{index + 1}.jpg",
+        content_type=file.content_type or "",
+      )
+    )
+
+  try:
+    result = identity_reference_service.validate_and_store(
+      user_id=current_user.user_id,
+      files=upload_items,
+      base_url=_resolve_public_base_url(request),
+    )
+  except IdentityReferenceCountError as exc:
+    raise HTTPException(status_code=400, detail={"message": exc.detail, "error_code": "identity_photo_count_invalid"}) from exc
+  except IdentityReferenceValidationError as exc:
+    raise HTTPException(
+      status_code=400,
+      detail={
+        "message": exc.detail,
+        "error_code": exc.error_code,
+        "failed_index": exc.file_index,
+      },
+    ) from exc
+
+  user_profile_service.replace_reference_face_urls(
+    user_id=current_user.user_id,
+    reference_face_urls=result.reference_urls,
+  )
+
+  return IdentityUploadResponse(
+    uploaded_count=result.uploaded_count,
+    reference_urls=result.reference_urls,
+  )
+
+
 @app.post("/api/v1/look/generate-full", response_model=FullLookGenerateResponse)
 async def generate_full_look(payload: FullLookGenerateRequest) -> FullLookGenerateResponse:
   """Full 4-step pipeline: base generation → face swap → VTON → upscale."""
@@ -270,6 +395,82 @@ async def generate_full_look(payload: FullLookGenerateRequest) -> FullLookGenera
     step2_face_swapped_url=result.step2_face_swapped_url,
     step3_vton_url=result.step3_vton_url,
     providers=result.providers,
+  )
+
+
+@app.post("/api/v1/daily-look/generate", response_model=DailyLookGenerateResponse)
+async def generate_daily_look(
+  request: Request,
+  payload: DailyLookGenerateRequest,
+  current_user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> DailyLookGenerateResponse:
+  weather_context = _serialize_weather_context(payload.weather_context)
+  available_garments = [_to_pipeline_garment(item) for item in payload.available_garments]
+  recommendation = outfit_recommendation_service.recommend(
+    garments=available_garments,
+    weather_context=weather_context,
+  )
+  selected_garment_ids = [garment.garment_id for garment in recommendation.selected_garments]
+  reusable_job = daily_look_job_service.find_reusable_job(
+    user_id=current_user.user_id,
+    selected_garment_ids=selected_garment_ids,
+    weather_context=weather_context,
+  )
+  if reusable_job is not None:
+    logger.info("daily_look_job_reused job_id=%s user_id=%s", reusable_job.id, current_user.user_id)
+    return DailyLookGenerateResponse(
+      job_id=reusable_job.id,
+      status=reusable_job.status,
+      selected_garment_ids=list(reusable_job.selected_garment_ids or []),
+    )
+
+  job = daily_look_job_service.create_job(
+    user_id=current_user.user_id,
+    selected_garment_ids=selected_garment_ids,
+    weather_context=weather_context,
+  )
+  task = asyncio.create_task(
+    daily_look_job_service.process_job(
+      job_id=job.id,
+      request=FullLookPipelineRequest(
+        user_id=current_user.user_id,
+        gender=payload.gender,
+        weather_context=weather_context,
+        garments=recommendation.selected_garments,
+      ),
+      public_base_url=_resolve_public_base_url(request),
+    )
+  )
+  _track_task(task)
+  return DailyLookGenerateResponse(
+    job_id=job.id,
+    status=job.status,
+    selected_garment_ids=selected_garment_ids,
+  )
+
+
+@app.get("/api/v1/daily-look/jobs/{job_id}", response_model=DailyLookJobResponse)
+async def get_daily_look_job(
+  job_id: str,
+  current_user: AuthenticatedUser = Depends(get_authenticated_user),
+) -> DailyLookJobResponse:
+  job = daily_look_job_service.get_job(job_id)
+  if job is None:
+    raise HTTPException(status_code=404, detail="Daily look job not found.")
+  if job.user_id != current_user.user_id:
+    raise HTTPException(status_code=404, detail="Daily look job not found.")
+
+  return DailyLookJobResponse(
+    id=job.id,
+    user_id=job.user_id,
+    status=job.status,
+    selected_garment_ids=list(job.selected_garment_ids or []),
+    weather_context=dict(job.weather_context or {}),
+    prompt=job.prompt,
+    final_image_url=job.final_image_url,
+    error_message=job.error_message,
+    created_at=job.created_at,
+    completed_at=job.completed_at,
   )
 
 
@@ -379,6 +580,7 @@ async def face_detect(file: UploadFile = File(...)) -> dict[str, Any]:
   return {
     "success": result.success,
     "face_detected": result.face_detected,
+    "face_count": result.face_count,
     "valid": result.valid,
     "confidence": result.confidence,
     "bbox": result.bbox,
@@ -465,6 +667,51 @@ def _track_task(task: asyncio.Task[Any]) -> None:
   task.add_done_callback(app.state.vton_tasks.discard)
 
 
+def _serialize_weather_context(payload: DailyLookWeatherContext) -> dict[str, Any]:
+  return {
+    "temperature_celsius": payload.temperature_celsius,
+    "condition": payload.condition,
+    "summary": payload.summary,
+    "precipitation": payload.precipitation,
+    "is_raining": payload.is_raining,
+    "is_snowing": payload.is_snowing,
+    "location": payload.location,
+    "season": payload.season,
+  }
+
+
+def _to_pipeline_garment(payload: DailyLookGarmentInput) -> PipelineGarment:
+  return PipelineGarment(
+    garment_id=payload.garment_id.strip(),
+    image_url=payload.image_url.strip(),
+    category=payload.category.strip(),
+    normalized_category=_normalize_garment_category(payload.category),
+    name=str(payload.name or "").strip(),
+    color=str(payload.color or "").strip(),
+  )
+
+
+def _normalize_garment_category(category: str | None) -> str:
+  normalized = str(category or "").strip().lower()
+  if normalized in {"dress", "dresses", "jumpsuit", "jumpsuits"}:
+    return "dress"
+  if normalized in {"bottom", "bottoms", "pants", "trousers", "jeans", "skirt", "shorts"}:
+    return "bottom"
+  if normalized in {"top", "tops", "shirt", "tshirt", "t-shirt", "blouse", "sweater", "hoodie"}:
+    return "top"
+  if normalized in {"outerwear", "coat", "jacket", "blazer", "parka"}:
+    return "outerwear"
+  if normalized in {"shoes", "sneakers", "boots", "heels"}:
+    return "shoes"
+  if normalized in {"hat", "beanie", "cap"}:
+    return "hat"
+  if normalized in {"bag", "handbag", "backpack"}:
+    return "bag"
+  if normalized in {"accessory", "accessories", "scarf", "jewelry", "belt"}:
+    return "accessory"
+  return "unknown"
+
+
 def _build_full_pipeline(garment_type: str = "upper_body") -> FullLookPipelineService:
   """Build the pipeline. garment_type MUST come from the request, not from .env."""
   return FullLookPipelineService(
@@ -477,6 +724,8 @@ def _build_full_pipeline(garment_type: str = "upper_body") -> FullLookPipelineSe
     face_swap=FalFaceSwapProvider(
       api_key=settings.fal_key,
       model_id=settings.fal_face_swap_model_id,
+      client_timeout_seconds=max(settings.fal_client_timeout_seconds, 600.0),
+      start_timeout_seconds=max(settings.fal_start_timeout_seconds, 90.0),
     ),
     vton=FalVTONProvider(
       api_key=settings.fal_key,
@@ -495,6 +744,43 @@ def _build_full_pipeline(garment_type: str = "upper_body") -> FullLookPipelineSe
       model_id=settings.fal_upscale_model_id,
       scale=settings.fal_upscale_scale,
     ),
+  )
+
+
+def _build_daily_look_pipeline() -> FullLookPipelineService:
+  return FullLookPipelineService(
+    base_gen=FalBaseGenerationProvider(
+      api_key=settings.fal_key,
+      model_id=settings.fal_base_gen_model_id,
+      num_inference_steps=settings.fal_base_gen_steps,
+      guidance_scale=settings.fal_base_gen_guidance,
+    ),
+    face_swap=FalFaceSwapProvider(
+      api_key=settings.fal_key,
+      model_id=settings.fal_face_swap_model_id,
+      client_timeout_seconds=max(settings.fal_client_timeout_seconds, 600.0),
+      start_timeout_seconds=max(settings.fal_start_timeout_seconds, 90.0),
+    ),
+    vton=FalVTONProvider(
+      api_key=settings.fal_key,
+      model_id=settings.fal_model_id,
+      garment_type=settings.fal_garment_type,
+      num_inference_steps=settings.fal_num_inference_steps,
+      guidance_scale=settings.fal_guidance_scale,
+      output_format=settings.fal_output_format,
+      enable_safety_checker=settings.fal_enable_safety_checker,
+      client_timeout_seconds=settings.fal_client_timeout_seconds,
+      start_timeout_seconds=settings.fal_start_timeout_seconds,
+      remove_bg_api_key=settings.remove_bg_api_key,
+    ),
+    upscale=FalUpscaleProvider(
+      api_key=settings.fal_key,
+      model_id=settings.fal_upscale_model_id,
+      scale=settings.fal_upscale_scale,
+    ),
+    prompt_builder=prompt_builder_service,
+    reference_face_url_resolver=user_profile_service.get_reference_face_urls,
+    input_reference_resolver=storage_service.resolve_provider_input_reference,
   )
 
 

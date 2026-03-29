@@ -167,6 +167,8 @@ async function main() {
   await runAll();
   await import('./wardrobe-review-layout.test.js');
   await runAll();
+  await import('./identity-capture.logic.test.ts');
+  await runAll();
   await import('./wardrobe-runtime.test.js');
   await runAll();
   await import('./wardrobe-scene-runtime.test.js');

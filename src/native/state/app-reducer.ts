@@ -1,5 +1,6 @@
 import { buildStylistReply, createChatMessage } from '../../shared/chat';
 import { buildManualOutfit, generateOutfitRecommendations } from '../../shared/outfits';
+import { ensureAuthSessionAccessToken } from '../../shared/onboarding';
 import { normalizeAccentPaletteKey, normalizeCustomAccentHex, normalizeProfileBio } from '../../shared/profile';
 import { buildUserProfile } from '../../shared/onboarding';
 import { buildWardrobeItem, createId, DEFAULT_WARDROBE_FILTER, getLayer, normalizeWardrobeSelection } from '../../shared/wardrobe';
@@ -32,6 +33,7 @@ export type AppAction =
   | { type: 'RESET_WARDROBE_FILTER' }
   | { type: 'COMPLETE_ONBOARDING'; payload: { session: AuthSession; profile: UserProfile } }
   | { type: 'SET_PROFILE_AVATAR'; payload: string }
+  | { type: 'SET_IDENTITY_REFERENCE_URLS'; payload: string[] }
   | { type: 'SET_PROFILE_BIO'; payload: string }
   | { type: 'ADD_WARDROBE_ITEM'; payload: WardrobeItem }
   | { type: 'ADD_WARDROBE_ITEMS'; payload: WardrobeItem[] }
@@ -58,6 +60,11 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'HYDRATE': {
       const wardrobeItems = normalizeWardrobeItems(action.payload.wardrobeItems);
       const wardrobeById = new Map(wardrobeItems.map(item => [item.id, item]));
+      const normalizedUser = normalizeUserProfile(action.payload.user);
+      const normalizedAuthSession = ensureAuthSessionAccessToken(
+        action.payload.authSession || state.authSession,
+        normalizedUser?.id || state.user?.id,
+      );
       return {
         ...state,
         ...action.payload,
@@ -66,7 +73,8 @@ export function appReducer(state: AppState, action: AppAction): AppState {
         accentPalette: normalizeAccentPalette(action.payload.accentPalette),
         customAccentColor: normalizeCustomAccentColor(action.payload.customAccentColor),
         activeTab: normalizeAppTab(action.payload.activeTab),
-        user: normalizeUserProfile(action.payload.user),
+        authSession: normalizedAuthSession,
+        user: normalizedUser,
         wardrobeItems,
         wardrobeFilter: {
           ...DEFAULT_WARDROBE_FILTER,
@@ -113,7 +121,7 @@ export function appReducer(state: AppState, action: AppAction): AppState {
     case 'COMPLETE_ONBOARDING':
       return {
         ...state,
-        authSession: action.payload.session,
+        authSession: ensureAuthSessionAccessToken(action.payload.session, action.payload.profile.id),
         user: action.payload.profile,
         activeTab: 'home',
       };
@@ -127,6 +135,17 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               profileAvatarUrl: action.payload,
               faceReferenceUrl: action.payload,
               lookFaceAssetUrl: action.payload,
+            },
+          }
+        : state;
+    case 'SET_IDENTITY_REFERENCE_URLS':
+      return state.user
+        ? {
+            ...state,
+            user: {
+              ...state.user,
+              identityReferenceUrls: action.payload,
+              faceReferenceUrl: action.payload[0] || state.user.faceReferenceUrl,
             },
           }
         : state;
@@ -471,6 +490,9 @@ function normalizeUserProfile(user: AppState['user'] | undefined): AppState['use
         name: String(user.name || '').trim() || 'User',
         style: user.style,
         bio: normalizeProfileBio(user.bio),
+        identityReferenceUrls: Array.isArray(user.identityReferenceUrls)
+          ? user.identityReferenceUrls.map(value => String(value || '')).filter(Boolean)
+          : [],
       }
     : null;
 }

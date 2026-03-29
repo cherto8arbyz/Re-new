@@ -8,6 +8,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
 import MaterialCommunityIcons from 'expo/node_modules/@expo/vector-icons/MaterialCommunityIcons';
@@ -73,6 +74,7 @@ export function HomeScreen(_: Props) {
 
 function HomeDashboard() {
   const { state, dispatch, theme } = useAppContext();
+  const navigation = useNavigation<Props['navigation']>();
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   const todayOutfit = useMemo(() => (
@@ -112,10 +114,10 @@ function HomeDashboard() {
           </View>
 
           <Pressable
-            onPress={() => dispatch({ type: 'SET_ACTIVE_TAB', payload: 'looks' })}
+            onPress={() => navigation.navigate('DailyLook')}
             style={styles.heroLink}
           >
-            <Text style={styles.heroLinkText}>Open studio</Text>
+            <Text style={styles.heroLinkText}>Generate photo</Text>
             <Ionicons name="arrow-forward" size={16} color={theme.colors.accent} />
           </Pressable>
         </View>

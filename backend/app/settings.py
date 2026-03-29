@@ -23,6 +23,14 @@ class Settings:
   background_removal_provider: str = os.getenv("BACKGROUND_REMOVAL_PROVIDER", "remove_bg").strip().lower() or "remove_bg"
   database_url: str = os.getenv("DATABASE_URL", DEFAULT_DATABASE_URL).strip()
   public_base_url: str = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+  supabase_url: str = (
+    os.getenv("SUPABASE_URL", "").strip().rstrip("/")
+    or os.getenv("EXPO_PUBLIC_SUPABASE_URL", "").strip().rstrip("/")
+  )
+  supabase_anon_key: str = (
+    os.getenv("SUPABASE_ANON_KEY", "").strip()
+    or os.getenv("EXPO_PUBLIC_SUPABASE_ANON_KEY", "").strip()
+  )
   hugging_face_space_id: str = os.getenv("HUGGING_FACE_SPACE_ID", "yisol/IDM-VTON").strip() or "yisol/IDM-VTON"
   hugging_face_api_name: str = os.getenv("HUGGING_FACE_API_NAME", "/tryon").strip() or "/tryon"
   hugging_face_token: str = os.getenv("HUGGING_FACE_TOKEN", "").strip()
