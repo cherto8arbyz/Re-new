@@ -7,6 +7,7 @@ import logging
 import mimetypes
 from dataclasses import dataclass
 from pathlib import Path
+import time
 from typing import Any
 
 logger = logging.getLogger("image-pipeline.pipeline.step2")
@@ -20,6 +21,13 @@ class FaceSwapResult:
     provider_name: str
 
 
+class FaceSwapSubmittedJobTimeoutError(RuntimeError):
+    def __init__(self, request_id: str, message: str) -> None:
+        super().__init__(message)
+        self.request_id = request_id
+        self.retry_allowed = False
+
+
 class FalFaceSwapProvider:
     """Replaces the face on a base image with the user's face (Step 2)."""
 
@@ -27,8 +35,8 @@ class FalFaceSwapProvider:
         self,
         api_key: str,
         model_id: str = DEFAULT_FACE_SWAP_MODEL_ID,
-        client_timeout_seconds: float = 120.0,
-        start_timeout_seconds: float = 60.0,
+        client_timeout_seconds: float = 300.0,
+        start_timeout_seconds: float = 90.0,
     ) -> None:
         self.api_key = (api_key or "").strip()
         self.model_id = (model_id or DEFAULT_FACE_SWAP_MODEL_ID).strip() or DEFAULT_FACE_SWAP_MODEL_ID
@@ -48,6 +56,31 @@ class FalFaceSwapProvider:
         if not face_image_url.strip():
             raise ValueError("face_image_url is required.")
         return await asyncio.to_thread(self._swap_sync, base_image_url.strip(), face_image_url.strip())
+
+    async def swap_face_with_references(
+        self,
+        base_image_url: str,
+        face_image_urls: list[str],
+    ) -> FaceSwapResult:
+        clean_references = [str(reference).strip() for reference in face_image_urls if str(reference).strip()]
+        if not clean_references:
+            raise ValueError("At least one face reference image is required.")
+
+        # Current configured fal face-swap model accepts one source face.
+        # Keep the multi-reference contract at the pipeline boundary so a stronger provider
+        # can replace this implementation without changing the orchestration layer.
+        return await self.swap_face(
+            base_image_url=base_image_url,
+            face_image_url=clean_references[0],
+        )
+
+    async def resume_face_swap_request(self, request_id: str) -> FaceSwapResult:
+        clean_request_id = str(request_id or "").strip()
+        if not clean_request_id:
+            raise ValueError("request_id is required.")
+        if not self.api_key:
+            raise RuntimeError("FAL_KEY is missing.")
+        return await asyncio.to_thread(self._resume_sync, clean_request_id)
 
     def _swap_sync(self, base_image_url: str, face_image_url: str) -> FaceSwapResult:
         try:
@@ -70,13 +103,93 @@ class FalFaceSwapProvider:
             base_image_url,
             face_image_url,
         )
-        result = client.subscribe(
-            self.model_id,
-            arguments=payload,
-            with_logs=False,
-            start_timeout=self.start_timeout_seconds,
-            client_timeout=self.client_timeout_seconds,
-        )
+        try:
+            handle = client.submit(
+                self.model_id,
+                arguments=payload,
+            )
+        except Exception as exc:
+            logger.exception("face_swap_submit_failed provider=%s", self.provider_name)
+            raise RuntimeError(f"fal face swap submit failed: {exc}") from exc
+
+        logger.info("face_swap_submitted provider=%s request_id=%s", self.provider_name, handle.request_id)
+        return self._complete_from_handle(handle)
+
+    def _resume_sync(self, request_id: str) -> FaceSwapResult:
+        try:
+            from fal_client import SyncClient
+        except ImportError as exc:
+            raise RuntimeError("fal-client package is not installed.") from exc
+
+        client = SyncClient(key=self.api_key, default_timeout=self.client_timeout_seconds)
+        try:
+            handle = client.get_handle(self.model_id, request_id)
+        except Exception as exc:
+            logger.exception("face_swap_get_handle_failed provider=%s request_id=%s", self.provider_name, request_id)
+            raise RuntimeError(f"fal face swap handle lookup failed: {exc}") from exc
+
+        logger.info("face_swap_resumed provider=%s request_id=%s", self.provider_name, request_id)
+        return self._complete_from_handle(handle)
+
+    def _complete_from_handle(self, handle: Any) -> FaceSwapResult:
+        deadline = time.monotonic() + self.client_timeout_seconds
+        while time.monotonic() < deadline:
+            try:
+                status_obj = handle.status(with_logs=False)
+                status_name = str(getattr(status_obj, "status", str(status_obj)) or "").upper()
+                queue_position = getattr(status_obj, "position", None)
+                logger.info(
+                    "face_swap_status provider=%s request_id=%s status=%s queue_position=%s",
+                    self.provider_name,
+                    handle.request_id,
+                    status_name,
+                    queue_position,
+                )
+                if status_name == "COMPLETED":
+                    break
+                if status_name in {"FAILED", "CANCELLED"}:
+                    raise RuntimeError(
+                        f"fal face swap job {status_name.lower()} (request_id={handle.request_id})"
+                    )
+            except RuntimeError:
+                raise
+            except Exception as exc:
+                logger.warning(
+                    "face_swap_status_poll_error provider=%s request_id=%s error=%s",
+                    self.provider_name,
+                    handle.request_id,
+                    exc,
+                )
+            time.sleep(3)
+        else:
+            raise FaceSwapSubmittedJobTimeoutError(
+                request_id=handle.request_id,
+                message=f"Request {handle.request_id} timed out after {self.client_timeout_seconds:.1f} seconds",
+            )
+
+        last_exc: Exception | None = None
+        for fetch_attempt in range(1, 4):
+            try:
+                result = handle.get()
+                break
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(
+                    "face_swap_result_fetch_failed provider=%s request_id=%s attempt=%d/3 error=%s",
+                    self.provider_name,
+                    handle.request_id,
+                    fetch_attempt,
+                    exc,
+                )
+                if fetch_attempt < 3:
+                    time.sleep(2)
+        else:
+            timeout_error = FaceSwapSubmittedJobTimeoutError(
+                request_id=handle.request_id,
+                message=f"fal face swap result fetch failed after 3 attempts (request_id={handle.request_id})",
+            )
+            raise timeout_error from last_exc
+
         image_url = self._extract_url(result)
         if not image_url:
             raise RuntimeError(f"Unexpected response shape from {self.provider_name}: {result!r}")

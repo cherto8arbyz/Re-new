@@ -13,6 +13,12 @@
           "photosPermission": "Re:new uses your photo library to create avatars and add wardrobe items.",
           "cameraPermission": "Re:new uses your camera to capture avatar and wardrobe photos."
         }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Re:new uses your camera to capture the five live identity angles for your avatar."
+        }
       ]
     ]
   }

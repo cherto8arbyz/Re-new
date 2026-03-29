@@ -35,6 +35,7 @@ class BaseGenerationRequest:
     pose: str = "walking towards camera, full body shot"
     image_width: int = 768
     image_height: int = 1024
+    prompt_override: str | None = None
 
 
 @dataclass(frozen=True)
@@ -106,6 +107,9 @@ class FalBaseGenerationProvider:
         return BaseGenerationResult(image_url=image_url, provider_name=self.provider_name)
 
     def _build_prompt(self, request: BaseGenerationRequest) -> str:
+        if request.prompt_override and request.prompt_override.strip():
+            return request.prompt_override.strip()
+
         bg = _SEASON_BACKGROUNDS.get(request.season.lower(), "neutral urban outdoor background")
         body = _BODY_TYPE_DESCRIPTORS.get(request.body_type.lower(), request.body_type)
         gender = request.gender.lower()

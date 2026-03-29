@@ -82,6 +82,7 @@ export interface UserProfile {
   profileAvatarUrl?: string;
   lookFaceAssetUrl?: string;
   faceReferenceUrl?: string;
+  identityReferenceUrls?: string[];
   faceAsset: FaceAsset | null;
   onboardingComplete: boolean;
 }

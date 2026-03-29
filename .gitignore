@@ -21,3 +21,11 @@ web-build/
 
 # OS
 Thumbs.db
+
+# Python backend runtime artifacts
+backend/.venv/
+backend/.pytest_cache/
+backend/app/data/*.db
+backend/app/static/uploads/
+__pycache__/
+*.pyc

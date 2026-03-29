@@ -10,9 +10,12 @@ import {
   View,
 } from 'react-native';
 import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { OutfitPreviewCanvas } from '../components/OutfitPreviewCanvas';
 import { useAppContext } from '../context/AppContext';
+import type { RootStackParamList } from '../navigation/types';
 import { pickImageAssetAsync } from '../services/image-picker';
 import {
   PROFILE_BIO_MAX_LENGTH,
@@ -33,11 +36,13 @@ const CUSTOM_ACCENT_SWATCHES = [
 
 export function ProfileScreen() {
   const { state, dispatch, theme } = useAppContext();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const profile = state.user;
   const profileName = String(profile?.name || '').trim() || 'User';
   const profileBio = typeof profile?.bio === 'string' ? profile.bio : '';
   const profileStyle = formatProfileStyle(profile?.style);
+  const identityReferenceCount = profile?.identityReferenceUrls?.length || 0;
   const savedLooks = state.savedLooks.filter(entry => entry && entry.outfit);
 
   const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
@@ -121,11 +126,21 @@ export function ProfileScreen() {
 
         <View style={styles.actionStack}>
           <Pressable
-            onPress={() => setSettingsMenuVisible(true)}
+            onPress={() => navigation.navigate('IdentityCapture')}
             style={styles.primaryActionButton}
           >
-            <Ionicons name="settings-outline" size={18} color={theme.colors.accentContrast} />
-            <Text style={styles.primaryActionText}>Settings</Text>
+            <Ionicons name="sparkles-outline" size={18} color={theme.colors.accentContrast} />
+            <Text style={styles.primaryActionText}>
+              {identityReferenceCount >= 5 ? `Generate Avatar (${identityReferenceCount})` : 'Generate Avatar'}
+            </Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => setSettingsMenuVisible(true)}
+            style={styles.secondaryActionButton}
+          >
+            <Ionicons name="settings-outline" size={18} color={theme.colors.text} />
+            <Text style={styles.secondaryActionText}>Settings</Text>
           </Pressable>
 
           <Pressable

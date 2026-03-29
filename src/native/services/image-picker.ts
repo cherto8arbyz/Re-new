@@ -4,18 +4,26 @@ export interface PickedImageAsset {
   uri: string;
   width: number;
   height: number;
+  fileSize?: number | null;
   base64?: string | null;
   mimeType?: string | null;
   fileName?: string | null;
 }
 
-interface PickImageAssetOptions {
+export interface PickImageAssetOptions {
   source?: 'library' | 'camera';
   allowsMultipleSelection?: boolean;
+  includeBase64?: boolean;
+  allowsEditing?: boolean;
 }
 
 export async function pickImageAssetsAsync(options: PickImageAssetOptions = {}): Promise<PickedImageAsset[]> {
-  const { source = 'library', allowsMultipleSelection = false } = options;
+  const {
+    source = 'library',
+    allowsMultipleSelection = false,
+    includeBase64 = true,
+    allowsEditing = !allowsMultipleSelection,
+  } = options;
   const permission = source === 'camera'
     ? await ImagePicker.requestCameraPermissionsAsync()
     : await ImagePicker.requestMediaLibraryPermissionsAsync();
@@ -27,17 +35,17 @@ export async function pickImageAssetsAsync(options: PickImageAssetOptions = {}):
   const result = source === 'camera'
     ? await ImagePicker.launchCameraAsync({
         mediaTypes: ['images'],
-        allowsEditing: true,
-        base64: true,
+        allowsEditing,
+        base64: includeBase64,
         quality: 1,
       })
     : await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ['images'],
-        allowsEditing: !allowsMultipleSelection,
+        allowsEditing,
         allowsMultipleSelection,
         orderedSelection: allowsMultipleSelection,
         selectionLimit: allowsMultipleSelection ? 0 : 1,
-        base64: true,
+        base64: includeBase64,
         quality: 1,
       });
 
@@ -49,13 +57,21 @@ export async function pickImageAssetsAsync(options: PickImageAssetOptions = {}):
     uri: asset.uri,
     width: asset.width ?? 0,
     height: asset.height ?? 0,
+    fileSize: asset.fileSize ?? null,
     base64: asset.base64,
     mimeType: asset.mimeType,
     fileName: asset.fileName,
   }));
 }
 
-export async function pickImageAssetAsync(source: 'library' | 'camera' = 'library'): Promise<PickedImageAsset | null> {
-  const assets = await pickImageAssetsAsync({ source, allowsMultipleSelection: false });
+export async function pickImageAssetAsync(
+  source: 'library' | 'camera' = 'library',
+  options: Omit<PickImageAssetOptions, 'source' | 'allowsMultipleSelection'> = {},
+): Promise<PickedImageAsset | null> {
+  const assets = await pickImageAssetsAsync({
+    source,
+    allowsMultipleSelection: false,
+    ...options,
+  });
   return assets[0] ?? null;
 }
