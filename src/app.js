@@ -46,6 +46,21 @@ import {
   hasGeminiKey,
   setGeminiApiKey,
 } from './services/gemini-provider.js';
+import {
+  AI_LOOK_UPGRADE_PRICE_USD,
+  EXPANDED_AI_LOOK_LIMIT,
+  FREE_AI_LOOK_LIMIT,
+  STRIPE_AI_LOOK_UPGRADE_URL,
+  UPGRADE_CONTEXT_AI_LOOKS,
+  buildAiLookUpgradeStorageKey,
+  buildAiLookUsageStorageKey,
+  buildUpgradePendingContextStorageKey,
+  extractUpgradeTargetFromUrl,
+  getAiLookLimit,
+  isUpgradeSuccessUrl,
+  isWardrobeUpgradeStoredValue,
+  parseUsageCount,
+} from './shared/wardrobe-upgrade.js';
 import { installMobileLayout } from './utils/mobile-layout.js';
 import { initSimulator } from '../dev_preview/simulator.js';
 
@@ -250,6 +265,92 @@ async function showMainApp(screen, authService, session) {
   setActiveUser(session.user.id);
   setActiveAccessToken(session.accessToken || '');
 
+  const aiUpgradeStorageKey = buildAiLookUpgradeStorageKey(session.user.id);
+  const aiUsageStorageKey = buildAiLookUsageStorageKey(session.user.id);
+  const pendingUpgradeContextStorageKey = buildUpgradePendingContextStorageKey(session.user.id);
+  let aiLookUpgradeUnlocked = isWardrobeUpgradeStoredValue(localStorage.getItem(aiUpgradeStorageKey));
+  let aiLookUsageCount = parseUsageCount(localStorage.getItem(aiUsageStorageKey));
+
+  const getAiGenerationLimit = () => getAiLookLimit(aiLookUpgradeUnlocked);
+
+  const saveAiLookUsageState = () => {
+    localStorage.setItem(aiUpgradeStorageKey, aiLookUpgradeUnlocked ? 'expanded' : 'free');
+    localStorage.setItem(aiUsageStorageKey, String(aiLookUsageCount));
+  };
+
+  const closeAiUpgradeModal = () => {
+    app.querySelector('#ai-upgrade-modal')?.remove();
+  };
+
+  /**
+   * @param {string} [note]
+   */
+  const openAiUpgradeModal = (note = '') => {
+    closeAiUpgradeModal();
+    const limit = getAiGenerationLimit();
+    const modal = document.createElement('div');
+    modal.id = 'ai-upgrade-modal';
+    modal.className = 'ai-upgrade-modal';
+    modal.innerHTML = `
+      <div class="ai-upgrade-card">
+        <button class="ai-upgrade-close" id="ai-upgrade-close" aria-label="Close AI upgrade modal">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+        <div class="ai-upgrade-eyebrow">AI Looks Plus</div>
+        <h3 class="ai-upgrade-title">Unlock 20 AI generations</h3>
+        <p class="ai-upgrade-copy">
+          You already used ${aiLookUsageCount}/${limit} AI generations. Upgrade for $${AI_LOOK_UPGRADE_PRICE_USD} and expand to ${EXPANDED_AI_LOOK_LIMIT}.
+        </p>
+        ${note ? `<p class="ai-upgrade-note">${note}</p>` : ''}
+        <button class="ai-upgrade-pay" id="ai-upgrade-pay">Pay $${AI_LOOK_UPGRADE_PRICE_USD}</button>
+      </div>
+    `;
+
+    app.appendChild(modal);
+    modal.querySelector('#ai-upgrade-close')?.addEventListener('click', () => {
+      closeAiUpgradeModal();
+    });
+    modal.querySelector('#ai-upgrade-pay')?.addEventListener('click', () => {
+      localStorage.setItem(pendingUpgradeContextStorageKey, UPGRADE_CONTEXT_AI_LOOKS);
+      closeAiUpgradeModal();
+      window.open(STRIPE_AI_LOOK_UPGRADE_URL, '_blank', 'noopener,noreferrer');
+    });
+  };
+
+  const consumeAiUpgradeSuccessFromUrl = () => {
+    const currentUrl = typeof window !== 'undefined' ? window.location.href : '';
+    if (!isUpgradeSuccessUrl(currentUrl)) return;
+
+    const target = extractUpgradeTargetFromUrl(currentUrl);
+    const pendingContext = String(localStorage.getItem(pendingUpgradeContextStorageKey) || '').trim().toLowerCase();
+    const shouldUnlock = target
+      ? target === UPGRADE_CONTEXT_AI_LOOKS
+      : pendingContext === UPGRADE_CONTEXT_AI_LOOKS;
+    if (!shouldUnlock) return;
+
+    aiLookUpgradeUnlocked = true;
+    localStorage.removeItem(pendingUpgradeContextStorageKey);
+    saveAiLookUsageState();
+
+    try {
+      const parsed = new URL(currentUrl);
+      parsed.searchParams.delete('wardrobeUpgrade');
+      parsed.searchParams.delete('upgrade');
+      parsed.searchParams.delete('payment');
+      parsed.searchParams.delete('status');
+      parsed.searchParams.delete('upgradeTarget');
+      parsed.searchParams.delete('target');
+      parsed.searchParams.delete('context');
+      if (window.history?.replaceState) {
+        window.history.replaceState({}, '', parsed.toString());
+      }
+    } catch {
+      // ignore malformed URL cleanup
+    }
+  };
+
+  consumeAiUpgradeSuccessFromUrl();
+
   const savedUserRaw = localStorage.getItem(`${USER_PROFILE_PREFIX}${session.user.id}`);
   if (savedUserRaw) {
     try {
@@ -438,19 +539,32 @@ async function showMainApp(screen, authService, session) {
             store.dispatch(selectTab('wardrobe'));
           },
           onGenerateAiLook: () => {
+            const limit = getAiGenerationLimit();
+            if (aiLookUsageCount >= limit) {
+              openAiUpgradeModal(`Free AI limit is ${FREE_AI_LOOK_LIMIT}. Upgrade to unlock ${EXPANDED_AI_LOOK_LIMIT} generations.`);
+              return;
+            }
+
             manualSelectedIds = [];
             manualOutfit = null;
-            void loadDataForDate(
-              store,
-              store.getState().selectedDate,
-              agentOrchestrator,
-              weatherService,
-              trendService,
-              dailyLookPhotoService,
-              recommendationService,
-              trendProvider,
-              fallbackTrendProvider,
-            );
+            void (async () => {
+              const result = await loadDataForDate(
+                store,
+                store.getState().selectedDate,
+                agentOrchestrator,
+                weatherService,
+                trendService,
+                dailyLookPhotoService,
+                recommendationService,
+                trendProvider,
+                fallbackTrendProvider,
+              );
+
+              if (result.generated) {
+                aiLookUsageCount += 1;
+                saveAiLookUsageState();
+              }
+            })();
           },
         });
       }
@@ -676,7 +790,7 @@ async function loadDataForDate(
       store.dispatch(setAiError(message));
       store.dispatch(setOutfits([]));
       store.dispatch(setAiLoading(false));
-      return;
+      return { generated: false };
     }
 
     const renderedSuggestions = await attachPhotorealisticDailyLook({
@@ -691,6 +805,7 @@ async function loadDataForDate(
 
     store.dispatch(setOutfits(renderedSuggestions));
     store.dispatch(setAiLoading(false));
+    return { generated: renderedSuggestions.length > 0 };
   } catch (err) {
     store.dispatch(setAiLoading(false));
     store.dispatch(setAiError('AI failed, showing manual wardrobe builder.'));
@@ -710,6 +825,7 @@ async function loadDataForDate(
       // keep existing state on secondary fallback failure
     }
     console.error('Failed to load daily look:', err);
+    return { generated: false };
   }
 }
 

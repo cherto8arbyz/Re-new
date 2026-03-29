@@ -35,6 +35,18 @@ Background removal provider keys:
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
+## Railway quick deploy
+
+1. Connect the repository in Railway.
+2. Set service `Root Directory` to `backend`.
+3. Enable a public domain.
+4. Set required env vars: `GEMINI_API_KEY`, and `REMOVE_BG_API_KEY` or `CLIPDROP_API_KEY`.
+5. For fal.ai generation also set: `AI_GENERATION_PROVIDER=fal`, `FAL_KEY`, `FAL_MODEL_ID` (optional override).
+6. Optionally set `DATABASE_URL` to Railway Postgres.
+7. Use `backend/.env.railway.example` to copy variables line-by-line.
+
+Health check endpoint: `GET /health`
+
 ## Endpoints
 
 - `POST /api/ai/generate-content` - server-side Gemini proxy for public web builds

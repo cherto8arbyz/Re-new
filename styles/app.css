@@ -62,6 +62,102 @@
   border-color: transparent;
 }
 
+.ai-upgrade-modal {
+  position: absolute;
+  inset: 0;
+  z-index: 130;
+  background: rgba(9, 11, 16, 0.56);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+}
+
+.ai-upgrade-card {
+  width: min(420px, 100%);
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid var(--color-border);
+  background:
+    radial-gradient(circle at 95% 10%, rgba(121, 214, 190, 0.2), transparent 45%),
+    radial-gradient(circle at 8% 88%, rgba(71, 162, 220, 0.15), transparent 35%),
+    var(--color-surface);
+  box-shadow: 0 24px 60px rgba(9, 11, 16, 0.45);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.ai-upgrade-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.ai-upgrade-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.ai-upgrade-eyebrow {
+  color: var(--color-accent);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  font-weight: 700;
+}
+
+.ai-upgrade-title {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 28px;
+  line-height: 1.08;
+}
+
+.ai-upgrade-copy {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+}
+
+.ai-upgrade-note {
+  margin: 0;
+  color: var(--color-text-primary);
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+}
+
+.ai-upgrade-pay {
+  border: none;
+  border-radius: 999px;
+  min-height: 44px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  background: linear-gradient(135deg, #2789c5 0%, #1f63a8 100%);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(31, 99, 168, 0.32);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.ai-upgrade-pay:hover {
+  transform: translateY(-1px);
+}
+
 .look-builder {
   border: 1px solid var(--color-border);
   background: var(--color-surface);

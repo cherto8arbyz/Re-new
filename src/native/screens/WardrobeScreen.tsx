@@ -1,8 +1,10 @@
-import React, { useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  AppState,
   Image,
   ImageBackground,
+  Linking,
   Modal,
   Pressable,
   SafeAreaView,
@@ -12,6 +14,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
 
 import {
@@ -60,6 +63,28 @@ import {
   getWardrobeSectionDefinition,
   getWardrobeSectionItems,
 } from './wardrobe-runtime.js';
+import {
+  EXPANDED_WARDROBE_LIMIT,
+  FREE_WARDROBE_LIMIT,
+  STRIPE_WARDROBE_UPGRADE_URL,
+  WARDROBE_UPGRADE_PRICE_USD,
+  UPGRADE_CONTEXT_WARDROBE,
+  buildUpgradePendingContextStorageKey,
+  buildUpgradePendingPaymentStorageKey,
+  buildStripeCheckoutUrl,
+  buildWardrobeUpgradeStorageKey,
+  createPendingUpgradePaymentRecord,
+  createUpgradeCheckoutReferenceId,
+  getWardrobeLimit,
+  isPendingUpgradePaymentExpired,
+  isUpgradeSuccessUrl,
+  isWardrobeUpgradeStoredValue,
+  parsePendingUpgradePayment,
+} from '../../shared/wardrobe-upgrade.js';
+import { verifyStripeUpgradePayment } from '../services/upgrade-payment';
+
+const WARDROBE_CHECKOUT_IS_STRIPE_TEST = /buy\.stripe\.com\/test_/i.test(STRIPE_WARDROBE_UPGRADE_URL);
+const STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS = 12000;
 
 export function WardrobeScreen() {
   const { state, dispatch, theme } = useAppContext();
@@ -73,6 +98,25 @@ export function WardrobeScreen() {
   const [analyzing, setAnalyzing] = useState(false);
   const [activeSectionKey, setActiveSectionKey] = useState<WardrobeSectionKey>('all');
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
+  const [upgradeUnlocked, setUpgradeUnlocked] = useState(false);
+  const [upgradeNotice, setUpgradeNotice] = useState('');
+  const verificationInFlightRef = useRef(false);
+
+  const userId = state.authSession?.user?.id || state.user?.id || 'anonymous';
+  const userEmail = state.authSession?.user?.email || '';
+  const upgradeStorageKey = useMemo(
+    () => buildWardrobeUpgradeStorageKey(userId),
+    [userId],
+  );
+  const pendingUpgradeContextStorageKey = useMemo(
+    () => buildUpgradePendingContextStorageKey(userId),
+    [userId],
+  );
+  const pendingUpgradePaymentStorageKey = useMemo(
+    () => buildUpgradePendingPaymentStorageKey(userId),
+    [userId],
+  );
 
   const sectionEntries = useMemo(
     () => buildWardrobeSectionEntries(state.wardrobeItems) as WardrobeSectionEntry[],
@@ -115,8 +159,170 @@ export function WardrobeScreen() {
     () => getWardrobeReviewLayoutMetrics(screenHeight, reviewEntries.length),
     [reviewEntries.length, screenHeight],
   );
+  const wardrobeLimit = getWardrobeLimit(upgradeUnlocked);
+  const wardrobeCount = state.wardrobeItems.length;
+  const remainingSlots = Math.max(0, wardrobeLimit - wardrobeCount);
+  const limitReached = remainingSlots <= 0;
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const storedValue = await AsyncStorage.getItem(upgradeStorageKey);
+      if (cancelled) return;
+      setUpgradeUnlocked(isWardrobeUpgradeStoredValue(storedValue));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [upgradeStorageKey]);
+
+  const unlockWardrobeUpgrade = useCallback(async () => {
+    if (upgradeUnlocked) return;
+    await AsyncStorage.setItem(upgradeStorageKey, 'expanded');
+    await AsyncStorage.multiRemove([
+      pendingUpgradeContextStorageKey,
+      pendingUpgradePaymentStorageKey,
+    ]);
+    setUpgradeUnlocked(true);
+    setUpgradeNotice(`Payment confirmed. Wardrobe expanded to ${EXPANDED_WARDROBE_LIMIT} items.`);
+    setUpgradeModalVisible(false);
+  }, [pendingUpgradeContextStorageKey, pendingUpgradePaymentStorageKey, upgradeStorageKey, upgradeUnlocked]);
+
+  const markPendingWardrobeUpgradeAsReturnedToApp = useCallback(async () => {
+    const [pendingContextRaw, pendingPaymentRaw] = await Promise.all([
+      AsyncStorage.getItem(pendingUpgradeContextStorageKey),
+      AsyncStorage.getItem(pendingUpgradePaymentStorageKey),
+    ]);
+    const pendingContext = String(pendingContextRaw || '').trim().toLowerCase();
+    if (pendingContext !== UPGRADE_CONTEXT_WARDROBE) return;
+
+    const pendingPayment = parsePendingUpgradePayment(pendingPaymentRaw);
+    if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_WARDROBE || pendingPayment.returnedToApp) {
+      return;
+    }
+
+    const nextPending = createPendingUpgradePaymentRecord({
+      context: pendingPayment.context,
+      referenceId: pendingPayment.referenceId,
+      createdAt: pendingPayment.createdAt,
+      customerEmail: pendingPayment.customerEmail || '',
+      returnedToApp: true,
+    });
+    if (!nextPending) return;
+    await AsyncStorage.setItem(pendingUpgradePaymentStorageKey, JSON.stringify(nextPending));
+  }, [pendingUpgradeContextStorageKey, pendingUpgradePaymentStorageKey]);
+
+  const verifyPendingWardrobeUpgradePayment = useCallback(async (
+    source: 'initial' | 'return' | 'deeplink' = 'initial',
+  ) => {
+    if (verificationInFlightRef.current) return false;
+    verificationInFlightRef.current = true;
+
+    try {
+      const [pendingContextRaw, pendingPaymentRaw] = await Promise.all([
+        AsyncStorage.getItem(pendingUpgradeContextStorageKey),
+        AsyncStorage.getItem(pendingUpgradePaymentStorageKey),
+      ]);
+      const pendingContext = String(pendingContextRaw || '').trim().toLowerCase();
+      if (pendingContext !== UPGRADE_CONTEXT_WARDROBE) return false;
+
+      const pendingPayment = parsePendingUpgradePayment(pendingPaymentRaw);
+      if (!pendingPayment || pendingPayment.context !== UPGRADE_CONTEXT_WARDROBE) {
+        await AsyncStorage.multiRemove([
+          pendingUpgradeContextStorageKey,
+          pendingUpgradePaymentStorageKey,
+        ]);
+        return false;
+      }
+      if (isPendingUpgradePaymentExpired(pendingPayment)) {
+        await AsyncStorage.multiRemove([
+          pendingUpgradeContextStorageKey,
+          pendingUpgradePaymentStorageKey,
+        ]);
+        return false;
+      }
+
+      const verification = await verifyStripeUpgradePayment({
+        context: UPGRADE_CONTEXT_WARDROBE,
+        referenceId: pendingPayment.referenceId,
+        customerEmail: pendingPayment.customerEmail || userEmail,
+        createdAfter: Math.max(0, Math.floor((pendingPayment.createdAt - (10 * 60 * 1000)) / 1000)),
+      });
+
+      if (verification.paid) {
+        await unlockWardrobeUpgrade();
+        return true;
+      }
+
+      const allowTestFallbackUnlock = WARDROBE_CHECKOUT_IS_STRIPE_TEST
+        && !verification.configured
+        && pendingPayment.returnedToApp
+        && (Date.now() - pendingPayment.createdAt) >= STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS;
+      if (allowTestFallbackUnlock) {
+        await unlockWardrobeUpgrade();
+        return true;
+      }
+
+      if (!verification.configured) {
+        setUpgradeNotice('Payment verification is unavailable right now.');
+      } else if (source !== 'initial') {
+        setUpgradeNotice('Payment is not confirmed yet. Complete checkout and return to the app.');
+      }
+      return false;
+    } finally {
+      verificationInFlightRef.current = false;
+    }
+  }, [
+    pendingUpgradeContextStorageKey,
+    pendingUpgradePaymentStorageKey,
+    unlockWardrobeUpgrade,
+    userEmail,
+  ]);
+
+  useEffect(() => {
+    void verifyPendingWardrobeUpgradePayment('initial');
+  }, [verifyPendingWardrobeUpgradePayment]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        void (async () => {
+          await markPendingWardrobeUpgradeAsReturnedToApp();
+          await verifyPendingWardrobeUpgradePayment('return');
+        })();
+      }
+    });
+    return () => {
+      subscription.remove();
+    };
+  }, [markPendingWardrobeUpgradeAsReturnedToApp, verifyPendingWardrobeUpgradePayment]);
+
+  useEffect(() => {
+    const handleUrl = (url: string | null) => {
+      if (!url || !isUpgradeSuccessUrl(url)) return;
+      void verifyPendingWardrobeUpgradePayment('deeplink');
+    };
+
+    void Linking.getInitialURL().then(url => {
+      handleUrl(url);
+    });
+
+    const subscription = Linking.addEventListener('url', event => {
+      handleUrl(event.url);
+    });
+
+    return () => {
+      subscription.remove();
+    };
+  }, [verifyPendingWardrobeUpgradePayment]);
 
   const openModal = () => {
+    if (limitReached) {
+      setUpgradeNotice(`Free plan limit is ${FREE_WARDROBE_LIMIT} items. Upgrade to store up to ${EXPANDED_WARDROBE_LIMIT}.`);
+      setUpgradeModalVisible(true);
+      return;
+    }
     resetReviewState();
     setModalVisible(true);
   };
@@ -175,18 +381,82 @@ export function WardrobeScreen() {
     const readyEntries = getReadyWardrobeUploadEntries(reviewEntries);
     if (!readyEntries.length || analyzing) return;
 
+    if (remainingSlots <= 0) {
+      closeModal();
+      setUpgradeNotice(`You already reached ${FREE_WARDROBE_LIMIT} items. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+      setUpgradeModalVisible(true);
+      return;
+    }
+
     const items = readyEntries
       .map(entry => entry.item)
       .filter((item): item is WardrobeItem => Boolean(item));
+    const itemsToSave = items.slice(0, remainingSlots);
 
-    if (items.length === 1) {
-      dispatch({ type: 'ADD_WARDROBE_ITEM', payload: items[0] });
-    } else if (items.length > 1) {
-      dispatch({ type: 'ADD_WARDROBE_ITEMS', payload: items });
+    if (itemsToSave.length === 1) {
+      dispatch({ type: 'ADD_WARDROBE_ITEM', payload: itemsToSave[0] });
+    } else if (itemsToSave.length > 1) {
+      dispatch({ type: 'ADD_WARDROBE_ITEMS', payload: itemsToSave });
+    }
+
+    if (itemsToSave.length < items.length) {
+      setUpgradeNotice(
+        `Saved ${itemsToSave.length} item(s). Free plan allows ${FREE_WARDROBE_LIMIT}. Upgrade to store up to ${EXPANDED_WARDROBE_LIMIT}.`,
+      );
+      setUpgradeModalVisible(true);
     }
 
     closeModal();
   };
+
+  const startUpgradeCheckout = useCallback(async () => {
+    const existingPendingRaw = await AsyncStorage.getItem(pendingUpgradePaymentStorageKey);
+    const existingPending = parsePendingUpgradePayment(existingPendingRaw);
+    if (
+      existingPending
+      && existingPending.context === UPGRADE_CONTEXT_WARDROBE
+      && !isPendingUpgradePaymentExpired(existingPending)
+      && Date.now() - existingPending.createdAt >= 12000
+    ) {
+      const resolved = await verifyPendingWardrobeUpgradePayment('return');
+      if (resolved) return;
+    }
+
+    const referenceId = createUpgradeCheckoutReferenceId(userId, UPGRADE_CONTEXT_WARDROBE);
+    const pendingPayment = createPendingUpgradePaymentRecord({
+      context: UPGRADE_CONTEXT_WARDROBE,
+      referenceId,
+      createdAt: Date.now(),
+      customerEmail: userEmail,
+    });
+    if (!pendingPayment) {
+      setUpgradeNotice('Could not prepare checkout session.');
+      return;
+    }
+
+    setUpgradeNotice('Complete Stripe checkout. The app will unlock automatically after payment.');
+    const checkoutUrl = buildStripeCheckoutUrl(STRIPE_WARDROBE_UPGRADE_URL, {
+      referenceId: pendingPayment.referenceId,
+      customerEmail: pendingPayment.customerEmail || userEmail,
+    });
+
+    try {
+      await AsyncStorage.multiSet([
+        [pendingUpgradeContextStorageKey, UPGRADE_CONTEXT_WARDROBE],
+        [pendingUpgradePaymentStorageKey, JSON.stringify(pendingPayment)],
+      ]);
+      await Linking.openURL(checkoutUrl || STRIPE_WARDROBE_UPGRADE_URL);
+    } catch {
+      setUpgradeNotice('Could not open checkout. Please try again.');
+    }
+  }, [
+    pendingUpgradeContextStorageKey,
+    pendingUpgradePaymentStorageKey,
+    unlockWardrobeUpgrade,
+    verifyPendingWardrobeUpgradePayment,
+    userEmail,
+    userId,
+  ]);
 
   const modalTitle = reviewEntries.length > 1
     ? 'Review items'
@@ -213,13 +483,14 @@ export function WardrobeScreen() {
             <View style={styles.headerCopy}>
               <Text style={styles.title}>Wardrobe</Text>
               <Text style={styles.subtitle}>
-                Scroll the closet and open filters from the pinned menu.
+                {`Slots used: ${wardrobeCount}/${wardrobeLimit}. Scroll the closet and open filters from the pinned menu.`}
               </Text>
+              {upgradeNotice ? <Text style={styles.upgradeNotice}>{upgradeNotice}</Text> : null}
             </View>
 
-            <Pressable onPress={openModal} style={styles.addButton}>
+            <Pressable onPress={openModal} style={[styles.addButton, limitReached && styles.addButtonLimited]}>
               <Ionicons name="add" size={18} color={theme.colors.accentContrast} />
-              <Text style={styles.addButtonText}>Add item</Text>
+              <Text style={styles.addButtonText}>{limitReached ? 'Upgrade' : 'Add item'}</Text>
             </Pressable>
           </View>
 
@@ -306,7 +577,7 @@ export function WardrobeScreen() {
                       : 'Add a few pieces and they will appear on the matching rail or shelf automatically.'}
                   </Text>
                   <Pressable onPress={openModal} style={styles.emptyAction}>
-                    <Text style={styles.emptyActionText}>Add item</Text>
+                    <Text style={styles.emptyActionText}>{limitReached ? 'Upgrade to add more' : 'Add item'}</Text>
                   </Pressable>
                 </View>
               </>
@@ -466,15 +737,64 @@ export function WardrobeScreen() {
                     </Pressable>
                     <Pressable
                       onPress={handleConfirmAdd}
-                      style={[styles.previewPrimary, !primaryAction.enabled && styles.previewPrimaryDisabled]}
-                      disabled={!primaryAction.enabled}
+                      style={[styles.previewPrimary, (!primaryAction.enabled || remainingSlots <= 0) && styles.previewPrimaryDisabled]}
+                      disabled={!primaryAction.enabled || remainingSlots <= 0}
                     >
-                      <Text style={styles.previewPrimaryText}>{primaryAction.label}</Text>
+                      <Text style={styles.previewPrimaryText}>{remainingSlots <= 0 ? 'Upgrade to continue' : primaryAction.label}</Text>
                     </Pressable>
                   </View>
                 </SafeAreaView>
               </>
             )}
+          </View>
+        </View>
+      </Modal>
+
+      <Modal
+        animationType="fade"
+        visible={upgradeModalVisible}
+        transparent
+        onRequestClose={() => setUpgradeModalVisible(false)}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.upgradeCard}>
+            <View style={styles.upgradeGlowA} />
+            <View style={styles.upgradeGlowB} />
+
+            <View style={styles.upgradeHeaderRow}>
+              <View style={styles.upgradeHeaderCopy}>
+                <Text style={styles.upgradeEyebrow}>Wardrobe Plus</Text>
+                <Text style={styles.upgradeTitle}>Unlock 50 wardrobe slots</Text>
+              </View>
+              <Pressable onPress={() => setUpgradeModalVisible(false)} style={styles.modalClose}>
+                <Ionicons name="close" size={18} color={theme.colors.text} />
+              </Pressable>
+            </View>
+
+            <Text style={styles.upgradeBody}>
+              {`You already used ${wardrobeCount}/${wardrobeLimit} slots. Upgrade for $${WARDROBE_UPGRADE_PRICE_USD} and expand your wardrobe to ${EXPANDED_WARDROBE_LIMIT} items.`}
+            </Text>
+            {upgradeNotice ? <Text style={styles.upgradeHint}>{upgradeNotice}</Text> : null}
+
+            <View style={styles.upgradeFeatureList}>
+              <View style={styles.upgradeFeatureRow}>
+                <Ionicons name="checkmark-circle" size={16} color={theme.colors.accent} />
+                <Text style={styles.upgradeFeatureText}>From {FREE_WARDROBE_LIMIT} to {EXPANDED_WARDROBE_LIMIT} saved items</Text>
+              </View>
+              <View style={styles.upgradeFeatureRow}>
+                <Ionicons name="checkmark-circle" size={16} color={theme.colors.accent} />
+                <Text style={styles.upgradeFeatureText}>One-time unlock for your current account</Text>
+              </View>
+            </View>
+
+            <View style={styles.upgradeActions}>
+              <Pressable
+                onPress={() => void startUpgradeCheckout()}
+                style={styles.upgradePrimary}
+              >
+                <Text style={styles.upgradePrimaryText}>{`Pay $${WARDROBE_UPGRADE_PRICE_USD}`}</Text>
+              </Pressable>
+            </View>
           </View>
         </View>
       </Modal>
@@ -954,6 +1274,12 @@ function createStyles(theme: ThemeTokens) {
       fontSize: 13,
       lineHeight: 18,
     },
+    upgradeNotice: {
+      color: theme.colors.accent,
+      fontSize: 11,
+      lineHeight: 16,
+      fontWeight: '700',
+    },
     addButton: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -962,6 +1288,9 @@ function createStyles(theme: ThemeTokens) {
       backgroundColor: theme.colors.accent,
       paddingHorizontal: 14,
       paddingVertical: 11,
+    },
+    addButtonLimited: {
+      backgroundColor: theme.colors.accentPressed,
     },
     addButtonText: {
       color: theme.colors.accentContrast,
@@ -2108,6 +2437,121 @@ function createStyles(theme: ThemeTokens) {
       maxHeight: '92%',
       minHeight: 0,
       overflow: 'hidden',
+    },
+    upgradeCard: {
+      width: '100%',
+      maxWidth: 420,
+      borderRadius: theme.radius.xl,
+      backgroundColor: theme.colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.md,
+      gap: theme.spacing.sm,
+      overflow: 'hidden',
+    },
+    upgradeGlowA: {
+      position: 'absolute',
+      top: -30,
+      right: -26,
+      width: 140,
+      height: 140,
+      borderRadius: 999,
+      backgroundColor: theme.colors.accentSoft,
+      opacity: 0.9,
+    },
+    upgradeGlowB: {
+      position: 'absolute',
+      bottom: -48,
+      left: -22,
+      width: 150,
+      height: 150,
+      borderRadius: 999,
+      backgroundColor: theme.colors.panel,
+      opacity: 0.55,
+    },
+    upgradeHeaderRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      gap: 10,
+    },
+    upgradeHeaderCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    upgradeEyebrow: {
+      color: theme.colors.accent,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 1.2,
+    },
+    upgradeTitle: {
+      color: theme.colors.text,
+      fontSize: 24,
+      lineHeight: 29,
+      fontWeight: '900',
+    },
+    upgradeBody: {
+      color: theme.colors.textSecondary,
+      fontSize: 14,
+      lineHeight: 21,
+    },
+    upgradeHint: {
+      color: theme.colors.text,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    upgradeFeatureList: {
+      gap: 8,
+      paddingTop: 6,
+      paddingBottom: 2,
+    },
+    upgradeFeatureRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+    },
+    upgradeFeatureText: {
+      flex: 1,
+      color: theme.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '700',
+    },
+    upgradeActions: {
+      gap: 10,
+      paddingTop: 6,
+    },
+    upgradePrimary: {
+      minHeight: 48,
+      borderRadius: theme.radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.accent,
+      paddingHorizontal: 16,
+    },
+    upgradePrimaryText: {
+      color: theme.colors.accentContrast,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    upgradeSecondary: {
+      minHeight: 46,
+      borderRadius: theme.radius.pill,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 16,
+    },
+    upgradeSecondaryText: {
+      color: theme.colors.text,
+      fontSize: 13,
+      fontWeight: '800',
     },
     modalHeader: {
       flexDirection: 'row',

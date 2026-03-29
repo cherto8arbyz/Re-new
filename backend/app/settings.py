@@ -11,6 +11,7 @@ PROJECT_ROOT_DIR = BACKEND_DIR.parent
 load_dotenv(BACKEND_DIR / ".env")
 load_dotenv(PROJECT_ROOT_DIR / ".env")
 DEFAULT_DATABASE_URL = f"sqlite:///{(APP_DIR / 'data' / 'renew_mvp.db').as_posix()}"
+DEFAULT_STRIPE_UPGRADE_PAYMENT_LINK_URL = "https://buy.stripe.com/test_9B65kw1kzgrG8WB3Xu04800"
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,17 @@ class Settings:
   replicate_garment_description: str = os.getenv("REPLICATE_GARMENT_DESCRIPTION", "").strip()
   replicate_extra_input_json: str = os.getenv("REPLICATE_EXTRA_INPUT_JSON", "{}").strip() or "{}"
   replicate_wait_seconds: int = int(os.getenv("REPLICATE_WAIT_SECONDS", "60"))
+  stripe_secret_key: str = os.getenv("STRIPE_SECRET_KEY", "").strip()
+  stripe_api_base_url: str = os.getenv("STRIPE_API_BASE_URL", "https://api.stripe.com").strip().rstrip("/") or "https://api.stripe.com"
+  stripe_wardrobe_upgrade_payment_link_url: str = (
+    os.getenv("STRIPE_WARDROBE_UPGRADE_PAYMENT_LINK_URL", DEFAULT_STRIPE_UPGRADE_PAYMENT_LINK_URL).strip().rstrip("/")
+    or DEFAULT_STRIPE_UPGRADE_PAYMENT_LINK_URL
+  )
+  stripe_ai_looks_upgrade_payment_link_url: str = (
+    os.getenv("STRIPE_AI_LOOKS_UPGRADE_PAYMENT_LINK_URL", "").strip().rstrip("/")
+    or os.getenv("STRIPE_WARDROBE_UPGRADE_PAYMENT_LINK_URL", DEFAULT_STRIPE_UPGRADE_PAYMENT_LINK_URL).strip().rstrip("/")
+    or DEFAULT_STRIPE_UPGRADE_PAYMENT_LINK_URL
+  )
   host: str = os.getenv("HOST", "127.0.0.1").strip() or "127.0.0.1"
   port: int = int(os.getenv("PORT", "8000"))
 

@@ -8,5 +8,6 @@ opencv-python==4.10.0.84
 numpy==1.26.4
 gradio_client==2.3.0
 SQLAlchemy==2.0.39
+psycopg[binary]==3.2.10
 fal-client==0.13.1
 replicate==1.0.7

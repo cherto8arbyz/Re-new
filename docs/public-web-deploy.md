@@ -5,19 +5,28 @@ This project can be published as a public web app with near-Expo behavior if you
 1. A static Expo web build.
 2. The Python backend from `backend/`, which now also proxies Gemini requests.
 
-## 1. Backend
+## 1. Backend on Railway (recommended)
 
-Deploy `backend/` anywhere that can run Docker.
+1. Create a new Railway project from this repository.
+2. Create a service with `Root Directory` set to `backend`.
+3. Railway will build from `backend/Dockerfile`.
+4. Enable a public domain for the service.
+5. Set the environment variables below.
+6. Use `backend/.env.railway.example` as a line-by-line template for Railway Variables.
 
 Required backend environment variables:
 
-- `GEMINI_API_KEY`
-- `REMOVE_BG_API_KEY` or `CLIPDROP_API_KEY`
+- `GEMINI_API_KEY` (Gemini proxy endpoint)
+- `REMOVE_BG_API_KEY` or `CLIPDROP_API_KEY` (background removal provider)
 
 Optional backend environment variables:
 
+- `AI_GENERATION_PROVIDER=fal` (recommended)
+- `FAL_KEY` and `FAL_MODEL_ID` if `AI_GENERATION_PROVIDER=fal`
 - `BACKGROUND_REMOVAL_PROVIDER=remove_bg`
 - `PORT=8000`
+- `PUBLIC_BASE_URL=https://<your-railway-domain>` (if not set, request base URL is used)
+- `DATABASE_URL=...` (Railway Postgres plugin connection string)
 
 Health check:
 
@@ -30,6 +39,11 @@ Core public endpoints used by the web app:
 - `POST /api/image/face-detect`
 - `POST /api/image/look-face-generate`
 
+Notes:
+
+- If `DATABASE_URL` points to Postgres, the backend now runs without sqlite-only arguments.
+- Uploaded/generated files are stored in container filesystem by default and may reset on redeploy.
+
 ## 2. Frontend
 
 Set these build-time variables in your web host:
@@ -39,8 +53,8 @@ Set these build-time variables in your web host:
 - `EXPO_PUBLIC_SUPABASE_ANON_KEY=...`
 - `EXPO_PUBLIC_SUPABASE_BUCKET_ORIGINALS=wardrobe-originals`
 - `EXPO_PUBLIC_SUPABASE_BUCKET_CUTOUTS=wardrobe-cutouts`
-- `EXPO_PUBLIC_IMAGE_PIPELINE_URL=https://your-backend.example.com`
-- `EXPO_PUBLIC_AI_PROXY_URL=https://your-backend.example.com`
+- `EXPO_PUBLIC_IMAGE_PIPELINE_URL=https://<your-railway-domain>`
+- `EXPO_PUBLIC_AI_PROXY_URL=https://<your-railway-domain>`
 - `EXPO_PUBLIC_GOOGLE_CALENDAR_ID=primary`
 - `EXPO_PUBLIC_USER_TIMEZONE=Europe/Minsk`
 

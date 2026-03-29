@@ -153,6 +153,8 @@ async function main() {
   await runAll();
   await import('./profile-state.test.js');
   await runAll();
+  await import('./wardrobe-upgrade.test.js');
+  await runAll();
   await import('./cv-service.test.js');
   await runAll();
   await import('./wardrobe-upload-flow.test.js');

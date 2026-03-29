@@ -66,6 +66,10 @@
   height: 18px;
 }
 
+.wardrobe__add-btn--limit {
+  background: linear-gradient(135deg, #d16b2f 0%, #b84a1f 100%);
+}
+
 /* Empty state */
 .wardrobe__empty {
   display: flex;
@@ -426,4 +430,124 @@
 
 .wardrobe__form-cancel:hover {
   color: var(--color-text-secondary);
+}
+
+.wardrobe__add-form--locked {
+  border-style: dashed;
+}
+
+.wardrobe__upgrade-inline-copy {
+  margin: 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+  line-height: 1.45;
+}
+
+.wardrobe__upgrade-modal {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 11, 16, 0.56);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--space-lg);
+  z-index: 120;
+}
+
+.wardrobe__upgrade-card {
+  width: min(420px, 100%);
+  position: relative;
+  border-radius: 24px;
+  border: 1px solid var(--color-border);
+  background:
+    radial-gradient(circle at 95% 8%, rgba(232, 87, 42, 0.22), transparent 48%),
+    radial-gradient(circle at 5% 92%, rgba(255, 196, 106, 0.18), transparent 40%),
+    var(--color-surface);
+  padding: var(--space-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+  box-shadow: 0 24px 60px rgba(9, 11, 16, 0.45);
+}
+
+.wardrobe__upgrade-close {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg);
+  color: var(--color-text-primary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.wardrobe__upgrade-close svg {
+  width: 14px;
+  height: 14px;
+}
+
+.wardrobe__upgrade-eyebrow {
+  color: var(--color-accent-warm);
+  font-size: 11px;
+  letter-spacing: 1.2px;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.wardrobe__upgrade-title {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.1;
+  color: var(--color-text-primary);
+}
+
+.wardrobe__upgrade-copy {
+  margin: 0;
+  font-size: var(--font-size-sm);
+  line-height: 1.5;
+  color: var(--color-text-secondary);
+}
+
+.wardrobe__upgrade-note {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 600;
+  color: var(--color-text-primary);
+}
+
+.wardrobe__upgrade-list {
+  margin: 0;
+  padding-left: 20px;
+  color: var(--color-text-secondary);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 13px;
+}
+
+.wardrobe__upgrade-pay {
+  border: none;
+  border-radius: 999px;
+  min-height: 44px;
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  cursor: pointer;
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.wardrobe__upgrade-pay {
+  background: linear-gradient(135deg, #e8572a 0%, #cc3f1d 100%);
+  color: #fff;
+  box-shadow: 0 10px 24px rgba(204, 63, 29, 0.32);
+}
+
+.wardrobe__upgrade-pay:hover {
+  transform: translateY(-1px);
 }

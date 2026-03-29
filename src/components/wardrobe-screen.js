@@ -3,6 +3,19 @@ import { resolveVisualAssetUrl } from '../models/garment-presentation.js';
 import { extractWardrobeFromUpload } from '../services/cv-service.js';
 import { addWardrobeItem, removeWardrobeItem } from '../state/actions.js';
 import { getGeminiService } from '../services/gemini-provider.js';
+import {
+  EXPANDED_WARDROBE_LIMIT,
+  FREE_WARDROBE_LIMIT,
+  STRIPE_WARDROBE_UPGRADE_URL,
+  WARDROBE_UPGRADE_PRICE_USD,
+  UPGRADE_CONTEXT_WARDROBE,
+  buildUpgradePendingContextStorageKey,
+  buildWardrobeUpgradeStorageKey,
+  extractUpgradeTargetFromUrl,
+  getWardrobeLimit,
+  isUpgradeSuccessUrl,
+  isWardrobeUpgradeStoredValue,
+} from '../shared/wardrobe-upgrade.js';
 
 /** @type {Record<string, string>} */
 const CATEGORY_LABELS = {
@@ -29,6 +42,11 @@ export class WardrobeScreen {
     this.store = store;
     this.showAddForm = false;
     this.pendingAddMode = '';
+    this.showUpgradeModal = false;
+    this.upgradeNotice = '';
+    this.wardrobeUpgradeUnlocked = false;
+    this.consumeUpgradeSuccessFromUrl();
+    this.loadWardrobeUpgradeState();
     this.consumePendingAddMode();
     this.render(store.getState());
     this.unsubscribe = this.store.subscribe(state => this.render(state));
@@ -37,6 +55,9 @@ export class WardrobeScreen {
   /** @param {import('../state/app-state.js').AppState} state */
   render(state) {
     const items = state.wardrobeItems;
+    const wardrobeLimit = this.getWardrobeLimit();
+    const remainingSlots = Math.max(0, wardrobeLimit - items.length);
+    const limitReached = remainingSlots <= 0;
 
     // Group by category
     /** @type {Record<string, import('../models/garment.js').Garment[]>} */
@@ -52,12 +73,12 @@ export class WardrobeScreen {
       <div class="wardrobe">
         <div class="wardrobe__header">
           <h2 class="wardrobe__title">My Wardrobe</h2>
-          <span class="wardrobe__count">${items.length} items</span>
+          <span class="wardrobe__count">${items.length}/${wardrobeLimit} items</span>
         </div>
 
-        <button class="wardrobe__add-btn" id="wr-add-btn">
+        <button class="wardrobe__add-btn ${limitReached ? 'wardrobe__add-btn--limit' : ''}" id="wr-add-btn">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
-          Add Item
+          ${limitReached ? 'Upgrade to Add' : 'Add Item'}
         </button>
 
         ${this.showAddForm ? this.renderAddForm() : ''}
@@ -103,6 +124,8 @@ export class WardrobeScreen {
             </div>
           `).join('')}
         </div>
+
+        ${this.renderUpgradeModal(items.length, wardrobeLimit)}
       </div>
     `;
 
@@ -110,6 +133,19 @@ export class WardrobeScreen {
   }
 
   renderAddForm() {
+    if (this.isWardrobeLimitReached()) {
+      return `
+      <div class="wardrobe__add-form wardrobe__add-form--locked">
+        <h3 class="wardrobe__form-title">Free limit reached</h3>
+        <p class="wardrobe__upgrade-inline-copy">
+          You already saved ${FREE_WARDROBE_LIMIT} items. Upgrade for $${WARDROBE_UPGRADE_PRICE_USD} and unlock ${EXPANDED_WARDROBE_LIMIT} slots.
+        </p>
+        <button class="wardrobe__form-submit" id="wr-open-upgrade">Open upgrade</button>
+        <button class="wardrobe__form-cancel" id="wr-cancel">Cancel</button>
+      </div>
+      `;
+    }
+
     const categories = Object.keys(CATEGORY_Z_INDEX);
     const hasAI = !!getGeminiService();
     const forcePhoto = this.pendingAddMode === 'single_item' || this.pendingAddMode === 'person_outfit';
@@ -185,10 +221,44 @@ export class WardrobeScreen {
     `;
   }
 
+  /**
+   * @param {number} usedSlots
+   * @param {number} limit
+   * @returns {string}
+   */
+  renderUpgradeModal(usedSlots, limit) {
+    if (!this.showUpgradeModal) return '';
+
+    return `
+      <div class="wardrobe__upgrade-modal" role="dialog" aria-modal="true" aria-labelledby="wr-upgrade-title">
+        <div class="wardrobe__upgrade-card">
+          <button class="wardrobe__upgrade-close" id="wr-upgrade-close" aria-label="Close upgrade window">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+          </button>
+          <div class="wardrobe__upgrade-eyebrow">Wardrobe Plus</div>
+          <h3 class="wardrobe__upgrade-title" id="wr-upgrade-title">Unlock 50 wardrobe slots</h3>
+          <p class="wardrobe__upgrade-copy">
+            You already used ${usedSlots}/${limit} slots. Upgrade for $${WARDROBE_UPGRADE_PRICE_USD} and expand your wardrobe to ${EXPANDED_WARDROBE_LIMIT} items.
+          </p>
+          ${this.upgradeNotice ? `<p class="wardrobe__upgrade-note">${this.upgradeNotice}</p>` : ''}
+          <ul class="wardrobe__upgrade-list">
+            <li>One-time upgrade for this account.</li>
+            <li>Save up to ${EXPANDED_WARDROBE_LIMIT} clothing items.</li>
+          </ul>
+          <button class="wardrobe__upgrade-pay" id="wr-upgrade-pay">Pay $${WARDROBE_UPGRADE_PRICE_USD}</button>
+        </div>
+      </div>
+    `;
+  }
+
   bindEvents() {
     // Toggle add form
     const addBtn = this.container.querySelector('#wr-add-btn');
     addBtn?.addEventListener('click', () => {
+      if (this.isWardrobeLimitReached()) {
+        this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+        return;
+      }
       this.showAddForm = !this.showAddForm;
       this.render(this.store.getState());
     });
@@ -198,6 +268,29 @@ export class WardrobeScreen {
     cancelBtn?.addEventListener('click', () => {
       this.showAddForm = false;
       this.render(this.store.getState());
+    });
+
+    const openUpgradeBtn = this.container.querySelector('#wr-open-upgrade');
+    openUpgradeBtn?.addEventListener('click', () => {
+      this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+    });
+
+    const closeUpgradeBtn = this.container.querySelector('#wr-upgrade-close');
+    closeUpgradeBtn?.addEventListener('click', () => {
+      this.showUpgradeModal = false;
+      this.render(this.store.getState());
+    });
+
+    const payUpgradeBtn = this.container.querySelector('#wr-upgrade-pay');
+    payUpgradeBtn?.addEventListener('click', () => {
+      this.upgradeNotice = 'Complete Stripe checkout and return to the app.';
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(this.getPendingUpgradeContextStorageKey(), UPGRADE_CONTEXT_WARDROBE);
+      }
+      this.render(this.store.getState());
+      if (typeof window !== 'undefined') {
+        window.open(STRIPE_WARDROBE_UPGRADE_URL, '_blank', 'noopener,noreferrer');
+      }
     });
 
     // Tab switching (Smart / Text / Photo)
@@ -226,6 +319,10 @@ export class WardrobeScreen {
       const description = input?.value?.trim();
 
       if (!description) return;
+      if (this.isWardrobeLimitReached()) {
+        this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+        return;
+      }
 
       const gemini = getGeminiService();
       if (!gemini) {
@@ -276,6 +373,12 @@ export class WardrobeScreen {
           },
         });
 
+        if (this.isWardrobeLimitReached()) {
+          submitSmartBtn.removeAttribute('disabled');
+          this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+          return;
+        }
+
         this.store.dispatch(addWardrobeItem(garment));
         this.showAddForm = false;
         this.pendingAddMode = '';
@@ -301,6 +404,10 @@ export class WardrobeScreen {
       const color = colorInput?.value || '#888888';
 
       if (!name || !category) return;
+      if (this.isWardrobeLimitReached()) {
+        this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+        return;
+      }
 
       /** @type {Record<string, import('../models/garment.js').GarmentPosition>} */
       const defaultPositions = {
@@ -345,6 +452,10 @@ export class WardrobeScreen {
     photoInput?.addEventListener('change', async () => {
       const file = photoInput.files?.[0];
       if (!file) return;
+      if (this.isWardrobeLimitReached()) {
+        this.openUpgradeModal(`Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`);
+        return;
+      }
 
       const statusEl = this.container.querySelector('#wr-photo-status');
       if (statusEl) {
@@ -367,7 +478,11 @@ export class WardrobeScreen {
       if (result.success) {
         const approved = result.autoApproved || [];
         const review = result.requiresReview || [];
-        for (const extracted of [...approved, ...review]) {
+        const extractedCandidates = [...approved, ...review];
+        const availableSlots = this.getRemainingSlots(this.store.getState());
+        let savedCount = 0;
+        for (const extracted of extractedCandidates) {
+          if (savedCount >= availableSlots) break;
           const garment = createGarment({
             name: extracted.title,
             title: extracted.title,
@@ -407,10 +522,20 @@ export class WardrobeScreen {
             },
           });
           this.store.dispatch(addWardrobeItem(garment));
+          savedCount += 1;
+        }
+
+        const skippedCount = Math.max(0, extractedCandidates.length - savedCount);
+        if (skippedCount > 0) {
+          this.showUpgradeModal = true;
+          this.showAddForm = false;
+          this.upgradeNotice = `Saved ${savedCount} item(s). ${skippedCount} item(s) need Wardrobe Plus (${EXPANDED_WARDROBE_LIMIT} slots).`;
         }
 
         if (statusEl) {
-          statusEl.textContent = approved.length > 0 && review.length > 0
+          statusEl.textContent = skippedCount > 0
+            ? `Saved ${savedCount} item(s). Upgrade to save ${skippedCount} more item(s).`
+            : approved.length > 0 && review.length > 0
             ? `Saved ${approved.length} items. ${review.length} items require review.`
             : approved.length > 0
             ? `Saved ${approved.length} wardrobe item(s).`
@@ -463,6 +588,114 @@ export class WardrobeScreen {
     });
   }
 
+  /**
+   * @returns {string}
+   */
+  getUpgradeStorageKey() {
+    const state = this.store.getState();
+    const userId = state.authSession?.user?.id || state.user?.id || 'anonymous';
+    return buildWardrobeUpgradeStorageKey(userId);
+  }
+
+  /**
+   * @returns {string}
+   */
+  getPendingUpgradeContextStorageKey() {
+    const state = this.store.getState();
+    const userId = state.authSession?.user?.id || state.user?.id || 'anonymous';
+    return buildUpgradePendingContextStorageKey(userId);
+  }
+
+  loadWardrobeUpgradeState() {
+    if (typeof localStorage === 'undefined') return;
+    const raw = localStorage.getItem(this.getUpgradeStorageKey());
+    this.wardrobeUpgradeUnlocked = isWardrobeUpgradeStoredValue(raw);
+  }
+
+  saveWardrobeUpgradeState() {
+    if (typeof localStorage === 'undefined') return;
+    localStorage.setItem(this.getUpgradeStorageKey(), this.wardrobeUpgradeUnlocked ? 'expanded' : 'free');
+  }
+
+  /**
+   * @returns {number}
+   */
+  getWardrobeLimit() {
+    return getWardrobeLimit(this.wardrobeUpgradeUnlocked);
+  }
+
+  /**
+   * @param {import('../state/app-state.js').AppState} [state]
+   * @returns {number}
+   */
+  getRemainingSlots(state = this.store.getState()) {
+    return Math.max(0, this.getWardrobeLimit() - state.wardrobeItems.length);
+  }
+
+  /**
+   * @param {import('../state/app-state.js').AppState} [state]
+   * @returns {boolean}
+   */
+  isWardrobeLimitReached(state = this.store.getState()) {
+    return this.getRemainingSlots(state) <= 0;
+  }
+
+  /**
+   * @param {string} [notice]
+   */
+  openUpgradeModal(notice = '') {
+    this.showUpgradeModal = true;
+    this.showAddForm = false;
+    if (notice) this.upgradeNotice = notice;
+    this.render(this.store.getState());
+  }
+
+  unlockWardrobeUpgrade() {
+    this.wardrobeUpgradeUnlocked = true;
+    this.saveWardrobeUpgradeState();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
+    }
+    this.showUpgradeModal = false;
+    this.upgradeNotice = `Upgrade activated. Wardrobe limit is now ${EXPANDED_WARDROBE_LIMIT}.`;
+    this.render(this.store.getState());
+  }
+
+  consumeUpgradeSuccessFromUrl() {
+    if (typeof window === 'undefined' || !window.location) return;
+    const currentUrl = window.location.href;
+    if (!isUpgradeSuccessUrl(currentUrl)) return;
+
+    const target = extractUpgradeTargetFromUrl(currentUrl);
+    const pendingContext = typeof localStorage !== 'undefined'
+      ? String(localStorage.getItem(this.getPendingUpgradeContextStorageKey()) || '').trim().toLowerCase()
+      : '';
+    const shouldUnlock = target
+      ? target === UPGRADE_CONTEXT_WARDROBE
+      : pendingContext === UPGRADE_CONTEXT_WARDROBE;
+    if (!shouldUnlock) return;
+
+    this.wardrobeUpgradeUnlocked = true;
+    this.saveWardrobeUpgradeState();
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(this.getPendingUpgradeContextStorageKey());
+    }
+    this.upgradeNotice = `Payment confirmed. Wardrobe expanded to ${EXPANDED_WARDROBE_LIMIT} items.`;
+
+    try {
+      const parsed = new URL(currentUrl);
+      parsed.searchParams.delete('wardrobeUpgrade');
+      parsed.searchParams.delete('upgrade');
+      parsed.searchParams.delete('payment');
+      parsed.searchParams.delete('status');
+      if (window.history?.replaceState) {
+        window.history.replaceState({}, '', parsed.toString());
+      }
+    } catch {
+      // ignore malformed URL cleanup
+    }
+  }
+
   destroy() {
     this.unsubscribe?.();
   }
@@ -471,7 +704,13 @@ export class WardrobeScreen {
     const mode = localStorage.getItem('renew_wardrobe_add_mode') || '';
     if (mode === 'single_item' || mode === 'person_outfit') {
       this.pendingAddMode = mode;
-      this.showAddForm = true;
+      if (this.isWardrobeLimitReached()) {
+        this.showAddForm = false;
+        this.showUpgradeModal = true;
+        this.upgradeNotice = `Free limit is ${FREE_WARDROBE_LIMIT}. Upgrade to unlock ${EXPANDED_WARDROBE_LIMIT}.`;
+      } else {
+        this.showAddForm = true;
+      }
     }
     localStorage.removeItem('renew_wardrobe_add_mode');
   }

@@ -22,7 +22,9 @@ class Base(DeclarativeBase):
 
 engine = create_engine(
   settings.database_url or DEFAULT_DATABASE_URL,
-  connect_args={"check_same_thread": False},
+  connect_args={"check_same_thread": False}
+  if (settings.database_url or DEFAULT_DATABASE_URL).strip().lower().startswith("sqlite")
+  else {},
 )
 SessionLocal = sessionmaker(
   bind=engine,

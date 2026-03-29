@@ -4,3 +4,8 @@ __pycache__/
 *.pyo
 *.pyd
 .pytest_cache/
+app/__pycache__/
+app/static/uploads/
+app/data/*.db
+tests/
+postman/

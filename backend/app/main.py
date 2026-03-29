@@ -32,6 +32,7 @@ from .services.face_detection_service import FaceDetectionService
 from .services.gemini_proxy_service import GeminiProxyService
 from .services.local_storage_service import LocalStorageService, STATIC_DIR
 from .services.look_face_generation_service import LookFaceGenerationService
+from .services.stripe_upgrade_service import StripeUpgradeService
 from .services.vton_job_service import VTONJobService
 from .settings import settings
 
@@ -80,6 +81,18 @@ vton_job_service = VTONJobService(
   storage_service=storage_service,
   provider_factory=lambda: _build_vton_provider(),
 )
+stripe_upgrade_services = {
+  "wardrobe": StripeUpgradeService(
+    secret_key=settings.stripe_secret_key,
+    payment_link_url=settings.stripe_wardrobe_upgrade_payment_link_url,
+    api_base_url=settings.stripe_api_base_url,
+  ),
+  "ai_looks": StripeUpgradeService(
+    secret_key=settings.stripe_secret_key,
+    payment_link_url=settings.stripe_ai_looks_upgrade_payment_link_url,
+    api_base_url=settings.stripe_api_base_url,
+  ),
+}
 
 
 class UploadResponse(BaseModel):
@@ -126,6 +139,21 @@ class VTONJobResponse(BaseModel):
   created_at: datetime
 
 
+class StripeUpgradeVerifyRequest(BaseModel):
+  context: str = "wardrobe"
+  reference_id: str
+  customer_email: str | None = None
+  created_after: int | None = None
+
+
+class StripeUpgradeVerifyResponse(BaseModel):
+  context: str
+  paid: bool
+  configured: bool
+  session_id: str | None = None
+  reason: str | None = None
+
+
 @app.on_event("startup")
 async def startup() -> None:
   init_db()
@@ -140,14 +168,39 @@ async def health() -> dict[str, Any]:
     "gemini_configured": gemini_proxy_service.configured,
     "ai_generation_provider": settings.ai_generation_provider,
     "background_provider": settings.background_removal_provider,
-    "database_url": settings.database_url,
+    "database_driver": _resolve_database_driver(settings.database_url),
+    "database_configured": bool(settings.database_url),
     "public_base_url": settings.public_base_url,
     "hugging_face_space_id": settings.hugging_face_space_id,
     "fal_configured": bool(settings.fal_key and settings.fal_model_id),
     "fal_model_id": settings.fal_model_id,
     "replicate_configured": bool(settings.replicate_api_token and settings.replicate_model),
     "replicate_model": settings.replicate_model,
+    "stripe_upgrade_configured": bool(settings.stripe_secret_key),
+    "stripe_wardrobe_payment_link_configured": bool(settings.stripe_wardrobe_upgrade_payment_link_url),
+    "stripe_ai_looks_payment_link_configured": bool(settings.stripe_ai_looks_upgrade_payment_link_url),
   }
+
+
+@app.post("/api/payments/stripe/verify-upgrade", response_model=StripeUpgradeVerifyResponse)
+async def verify_stripe_upgrade_payment(payload: StripeUpgradeVerifyRequest) -> StripeUpgradeVerifyResponse:
+  context = _normalize_upgrade_context(payload.context)
+  service = stripe_upgrade_services.get(context)
+  if service is None:
+    raise HTTPException(status_code=400, detail="Unsupported upgrade context.")
+
+  verification = await service.verify_upgrade_payment(
+    reference_id=payload.reference_id,
+    customer_email=payload.customer_email,
+    created_after=payload.created_after,
+  )
+  return StripeUpgradeVerifyResponse(
+    context=context,
+    paid=verification.paid,
+    configured=verification.configured,
+    session_id=verification.matched_session_id,
+    reason=verification.reason,
+  )
 
 
 @app.post("/api/ai/generate-content")
@@ -387,6 +440,24 @@ def to_data_url(raw: bytes, mime_type: str) -> str:
 
 def _resolve_public_base_url(request: Request) -> str:
   return settings.public_base_url or str(request.base_url).rstrip("/")
+
+
+def _resolve_database_driver(database_url: str) -> str:
+  raw_value = (database_url or "").strip().lower()
+  if not raw_value:
+    return "unknown"
+  if "://" not in raw_value:
+    return "unknown"
+  return raw_value.split("://", 1)[0]
+
+
+def _normalize_upgrade_context(value: str | None) -> str:
+  normalized = str(value or "").strip().lower()
+  if normalized == "wardrobe":
+    return "wardrobe"
+  if normalized in {"ai_looks", "ai-looks", "ai"}:
+    return "ai_looks"
+  raise HTTPException(status_code=400, detail="Unsupported upgrade context.")
 
 
 def _track_task(task: asyncio.Task[Any]) -> None:
