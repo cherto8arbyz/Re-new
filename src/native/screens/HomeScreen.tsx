@@ -92,7 +92,11 @@ function HomeDashboard() {
     : 'Add a few key pieces and the mannequin will start shaping the look for you.';
 
   return (
-    <ScrollView contentContainerStyle={styles.dashboardContent} showsVerticalScrollIndicator={false}>
+    <ScrollView
+      style={styles.dashboardScroll}
+      contentContainerStyle={styles.dashboardContent}
+      showsVerticalScrollIndicator={false}
+    >
       <View style={styles.weatherCard}>
         <DayWeatherCarousel
           selectedDate={state.selectedDate}
@@ -256,6 +260,8 @@ function createStyles(theme: ThemeTokens) {
     safe: {
       flex: 1,
       backgroundColor: theme.colors.background,
+      width: '100%',
+      alignSelf: 'stretch',
     },
     backgroundOrbOne: {
       position: 'absolute',
@@ -292,12 +298,24 @@ function createStyles(theme: ThemeTokens) {
       flex: 1,
       paddingHorizontal: theme.spacing.md,
       paddingTop: theme.spacing.sm,
+      width: '100%',
+      minWidth: 0,
+      alignSelf: 'stretch',
+    },
+    dashboardScroll: {
+      width: '100%',
+      minWidth: 0,
+      alignSelf: 'stretch',
     },
     dashboardContent: {
+      width: '100%',
+      minWidth: 0,
       paddingBottom: theme.spacing.xl,
       gap: theme.spacing.md,
     },
     weatherCard: {
+      width: '100%',
+      minWidth: 0,
       borderRadius: theme.radius.xl,
       backgroundColor: theme.colors.surface,
       borderWidth: 1,
@@ -305,6 +323,8 @@ function createStyles(theme: ThemeTokens) {
       padding: theme.spacing.xs,
     },
     heroCard: {
+      width: '100%',
+      minWidth: 0,
       borderRadius: theme.radius.xl,
       backgroundColor: theme.colors.card,
       borderWidth: 1,
@@ -452,6 +472,8 @@ function createStyles(theme: ThemeTokens) {
     statsRow: {
       flexDirection: 'row',
       gap: theme.spacing.sm,
+      width: '100%',
+      minWidth: 0,
     },
     statCard: {
       flex: 1,
@@ -477,11 +499,15 @@ function createStyles(theme: ThemeTokens) {
       paddingHorizontal: theme.spacing.md,
       paddingBottom: theme.spacing.md,
       paddingTop: theme.spacing.sm,
+      width: '100%',
+      minWidth: 0,
+      alignSelf: 'stretch',
     },
     tabBar: {
       flexDirection: 'row',
       alignItems: 'center',
       gap: 8,
+      width: '100%',
       backgroundColor: theme.colors.surface,
       borderRadius: theme.radius.xl,
       borderWidth: 1,
@@ -491,6 +517,7 @@ function createStyles(theme: ThemeTokens) {
     },
     tabButton: {
       flex: 1,
+      minWidth: 0,
       minHeight: 58,
       borderRadius: 18,
       alignItems: 'center',
