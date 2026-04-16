@@ -12,7 +12,7 @@ import {
 } from 'react-native';
 import { CameraView, type CameraCapturedPicture, useCameraPermissions } from 'expo-camera';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { resolveAuthAccessToken } from '../../shared/onboarding';

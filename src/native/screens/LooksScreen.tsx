@@ -9,22 +9,29 @@ import {
   Text,
   View,
 } from 'react-native';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useNavigation } from '@react-navigation/native';
+import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import { buildDefaultTryOnOutfit, buildManualOutfit } from '../../shared/outfits';
 import {
-  normalizeWardrobeSelection,
-  resolveWardrobeBodySlot,
-} from '../../shared/wardrobe';
-import type { WardrobeItem } from '../../types/models';
+  buildLookPreviewComposition,
+  buildLookSelectionForControl,
+  buildLookSlotOptions,
+  getLookControlSlotLabel,
+  LOOK_CANVAS_CONTROL_POSITIONS,
+  LOOK_CONTROL_SLOT_ORDER,
+  type LookControlSlot,
+} from '../../shared/look-preview';
+import { getWardrobeItemShortTitle } from '../../shared/wardrobe';
 import { DayWeatherCarousel } from '../components/DayWeatherCarousel';
 import {
   FullBodyOutfitCanvas,
-  type BodySlotKey,
   type CanvasSlotControl,
 } from '../components/FullBodyOutfitCanvas';
 import { useAppContext } from '../context/AppContext';
+import type { RootStackParamList } from '../navigation/types';
 import { generateLooksWithStylist } from '../services/stylist-service';
 import type { ThemeTokens } from '../theme';
 import {
@@ -35,9 +42,9 @@ import {
   UPGRADE_CONTEXT_AI_LOOKS,
   buildAiLookUpgradeStorageKey,
   buildAiLookUsageStorageKey,
+  buildStripeCheckoutUrl,
   buildUpgradePendingContextStorageKey,
   buildUpgradePendingPaymentStorageKey,
-  buildStripeCheckoutUrl,
   createPendingUpgradePaymentRecord,
   createUpgradeCheckoutReferenceId,
   getAiLookLimit,
@@ -49,18 +56,24 @@ import {
 } from '../../shared/wardrobe-upgrade.js';
 import { verifyStripeUpgradePayment } from '../services/upgrade-payment';
 import {
-  LOOK_CANVAS_CONTROL_POSITIONS,
   pickNextCycledOption,
   resolveLooksDisplayOutfit,
 } from './looks-runtime.js';
 
-const CANVAS_CONTROL_ORDER: BodySlotKey[] = ['head', 'accessory', 'torso', 'legs', 'socks', 'feet'];
 const NONE_CYCLE_ID = '__none__';
 const AI_LOOKS_CHECKOUT_IS_STRIPE_TEST = /buy\.stripe\.com\/test_/i.test(STRIPE_AI_LOOK_UPGRADE_URL);
 const STRIPE_TEST_RETURN_UNLOCK_MIN_AGE_MS = 12000;
 
+interface AvatarReadinessUi {
+  title: string;
+  copy: string;
+  ctaLabel: string | null;
+  action: 'profile' | 'identity' | null;
+}
+
 export function LooksScreen() {
   const { state, dispatch, theme } = useAppContext();
+  const navigation = useNavigation<NativeStackNavigationProp<RootStackParamList>>();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [aiUpgradeUnlocked, setAiUpgradeUnlocked] = useState(false);
   const [aiGenerationUsage, setAiGenerationUsage] = useState(0);
@@ -266,54 +279,66 @@ export function LooksScreen() {
     fallbackOutfit: autoTryOnOutfit,
   }), [autoTryOnOutfit, manualOutfit, state.activeOutfitIndex, state.generatedLooks]);
 
-  const activeTryOnIds = useMemo(() => (
-    Array.isArray(activeOutfit?.garments)
-      ? activeOutfit.garments.map((item: WardrobeItem) => item.id)
-      : []
-  ), [activeOutfit]);
-
-  const activeZones = useMemo(() => buildActiveZones(activeOutfit?.garments || []), [activeOutfit?.garments]);
-  const zoneOptions = useMemo(() => buildZoneOptions(state.wardrobeItems), [state.wardrobeItems]);
+  const composition = useMemo(
+    () => buildLookPreviewComposition(activeOutfit?.garments || [], state.user),
+    [activeOutfit?.garments, state.user],
+  );
+  const activeTryOnIds = useMemo(
+    () => composition.visibleItems.map(item => item.id),
+    [composition.visibleItems],
+  );
+  const slotOptions = useMemo(
+    () => buildLookSlotOptions(state.wardrobeItems),
+    [state.wardrobeItems],
+  );
   const completionHints = useMemo(() => buildCompletionHints(activeOutfit), [activeOutfit]);
+  const avatarReadiness = useMemo(
+    () => resolveAvatarReadinessUi(composition.avatarState),
+    [composition.avatarState],
+  );
+  const visibleSlotCards = useMemo(() => LOOK_CONTROL_SLOT_ORDER.filter(slot => {
+    const optionCount = slotOptions[slot]?.length || 0;
+    return optionCount > 0
+      || Boolean(composition.activeSlots[slot])
+      || composition.missingCoreSlots.includes(slot);
+  }), [composition.activeSlots, composition.missingCoreSlots, slotOptions]);
 
-  const handleSelectZoneItem = (slotKey: BodySlotKey, itemId: string | null) => {
+  const handleSelectSlotItem = useCallback((slot: LookControlSlot, itemId: string | null) => {
     const nextItem = itemId
       ? state.wardrobeItems.find(item => item.id === itemId) || null
       : null;
 
     dispatch({
       type: 'SET_MANUAL_SELECTION_IDS',
-      payload: buildSelectionForControl(slotKey, nextItem, activeTryOnIds, state.wardrobeItems),
+      payload: buildLookSelectionForControl(slot, nextItem, activeTryOnIds, state.wardrobeItems),
     });
-  };
+  }, [activeTryOnIds, dispatch, state.wardrobeItems]);
 
-  const handleCycleSlot = (slotKey: BodySlotKey, direction: number) => {
-    const options = zoneOptions[slotKey] || [];
+  const handleCycleSlot = useCallback((slot: LookControlSlot, direction: number) => {
+    const options = slotOptions[slot] || [];
     if (!options.length) return;
 
-    const currentItem = slotKey === 'accessory'
-      ? activeZones.accessoryItems[0] || null
-      : activeZones.activeSlots[slotKey];
     const next = pickNextCycledOption(
       [{ id: NONE_CYCLE_ID }, ...options],
-      currentItem?.id || NONE_CYCLE_ID,
+      composition.activeSlots[slot]?.id || NONE_CYCLE_ID,
       direction,
     );
-
     if (!next) return;
-    handleSelectZoneItem(slotKey, next.id === NONE_CYCLE_ID ? null : String(next.id));
-  };
 
-  const canvasSlotControls = CANVAS_CONTROL_ORDER.reduce<CanvasSlotControl[]>((controls, slotKey) => {
-    const options = zoneOptions[slotKey] || [];
-    if (!options.length) return controls;
+    handleSelectSlotItem(slot, next.id === NONE_CYCLE_ID ? null : String(next.id));
+  }, [composition.activeSlots, handleSelectSlotItem, slotOptions]);
+
+  const canvasSlotControls = LOOK_CONTROL_SLOT_ORDER.reduce<CanvasSlotControl[]>((controls, slot) => {
+    const options = slotOptions[slot] || [];
+    const enabled = options.length > 0;
+    if (!enabled) return controls;
 
     controls.push({
-      slot: slotKey,
-      yPercent: Number(LOOK_CANVAS_CONTROL_POSITIONS?.[slotKey] || 50),
-      enabled: options.length > 0,
-      onPrev: () => handleCycleSlot(slotKey, -1),
-      onNext: () => handleCycleSlot(slotKey, 1),
+      slot,
+      yPercent: Number(LOOK_CANVAS_CONTROL_POSITIONS[slot] || 50),
+      enabled,
+      onPrev: () => handleCycleSlot(slot, -1),
+      onNext: () => handleCycleSlot(slot, 1),
     });
     return controls;
   }, []);
@@ -387,7 +412,6 @@ export function LooksScreen() {
   }, [
     pendingUpgradeContextStorageKey,
     pendingUpgradePaymentStorageKey,
-    unlockAiLookUpgrade,
     verifyPendingAiUpgradePayment,
     userEmail,
     userId,
@@ -405,6 +429,16 @@ export function LooksScreen() {
     dispatch({ type: 'SAVE_OUTFIT', payload: { outfit: activeOutfit } });
   };
 
+  const handleAvatarCta = useCallback(() => {
+    if (avatarReadiness.action === 'profile') {
+      dispatch({ type: 'SET_ACTIVE_TAB', payload: 'profile' });
+      return;
+    }
+    if (avatarReadiness.action === 'identity') {
+      navigation.navigate('IdentityCapture');
+    }
+  }, [avatarReadiness.action, dispatch, navigation]);
+
   return (
     <View style={styles.root}>
       <DayWeatherCarousel
@@ -418,9 +452,9 @@ export function LooksScreen() {
       <ScrollView contentContainerStyle={styles.content} showsVerticalScrollIndicator={false}>
         <View style={styles.canvasWrap}>
           <FullBodyOutfitCanvas
-            activeSlots={activeZones.activeSlots}
-            accessoryItems={activeZones.accessoryItems}
-            avatarUrl={state.user?.lookFaceAssetUrl || state.user?.avatarUrl || ''}
+            items={composition.visibleItems}
+            avatarUrl={composition.avatarUrl}
+            avatarState={composition.avatarState}
             theme={theme}
             editable
             completionHints={completionHints}
@@ -429,6 +463,36 @@ export function LooksScreen() {
               dispatch({ type: 'UPDATE_GARMENT_ADJUSTMENT', payload: { itemId, patch } });
             }}
           />
+        </View>
+
+        <View style={styles.statusCard}>
+          <View style={styles.statusCopy}>
+            <Text style={styles.statusTitle}>{avatarReadiness.title}</Text>
+            <Text style={styles.statusText}>{avatarReadiness.copy}</Text>
+          </View>
+          {avatarReadiness.ctaLabel ? (
+            <Pressable onPress={handleAvatarCta} style={styles.statusAction}>
+              <Text style={styles.statusActionText}>{avatarReadiness.ctaLabel}</Text>
+            </Pressable>
+          ) : null}
+        </View>
+
+        <View style={styles.slotRail}>
+          {visibleSlotCards.map(slot => {
+            const activeItem = composition.activeSlots[slot];
+            const missing = composition.missingCoreSlots.includes(slot);
+            return (
+              <View key={slot} style={[styles.slotCard, missing && styles.slotCardMissing]}>
+                <Text style={styles.slotLabel}>{getLookControlSlotLabel(slot)}</Text>
+                <Text numberOfLines={1} style={[styles.slotValue, !activeItem && styles.slotValueMuted]}>
+                  {activeItem ? getWardrobeItemShortTitle(activeItem) : missing ? 'Missing' : 'Optional'}
+                </Text>
+                <Text style={styles.slotHelp}>
+                  {(slotOptions[slot]?.length || 0) > 1 ? 'Use canvas arrows to cycle' : 'Current slot state'}
+                </Text>
+              </View>
+            );
+          })}
         </View>
       </ScrollView>
 
@@ -449,7 +513,7 @@ export function LooksScreen() {
 
           <Pressable
             style={[styles.actionBtn, styles.actionBtnPrimary, state.aiLoading && styles.actionBtnDisabled]}
-            onPress={handleGenerate}
+            onPress={() => void handleGenerate()}
             disabled={state.aiLoading}
           >
             <Ionicons name="sparkles-outline" size={16} color={theme.colors.accentContrast} />
@@ -501,40 +565,6 @@ export function LooksScreen() {
   );
 }
 
-function buildActiveZones(items: WardrobeItem[]): {
-  activeSlots: Partial<Record<Exclude<BodySlotKey, 'accessory'>, WardrobeItem>>;
-  accessoryItems: WardrobeItem[];
-} {
-  return items.reduce<{
-    activeSlots: Partial<Record<Exclude<BodySlotKey, 'accessory'>, WardrobeItem>>;
-    accessoryItems: WardrobeItem[];
-  }>((accumulator, item) => {
-    if (!item || typeof item !== 'object') return accumulator;
-    const slotKey = categoryToSlotKey(item);
-    if (!slotKey) return accumulator;
-
-    if (slotKey === 'accessory') {
-      accumulator.accessoryItems.push(item);
-      return accumulator;
-    }
-
-    if (!accumulator.activeSlots[slotKey]) {
-      accumulator.activeSlots[slotKey] = item;
-    }
-    return accumulator;
-  }, { activeSlots: {}, accessoryItems: [] });
-}
-
-function buildZoneOptions(items: WardrobeItem[]): Partial<Record<BodySlotKey, WardrobeItem[]>> {
-  return items.reduce<Partial<Record<BodySlotKey, WardrobeItem[]>>>((accumulator, item) => {
-    if (!item || typeof item !== 'object') return accumulator;
-    const slotKey = categoryToSlotKey(item);
-    if (!slotKey) return accumulator;
-    accumulator[slotKey] = [...(accumulator[slotKey] || []), item];
-    return accumulator;
-  }, {});
-}
-
 function buildCompletionHints(outfit: { renderMetadata?: Record<string, unknown> } | null): string[] {
   if (!outfit) return [];
 
@@ -552,64 +582,30 @@ function buildCompletionHints(outfit: { renderMetadata?: Record<string, unknown>
   return hints.slice(0, 2);
 }
 
-function categoryToSlotKey(item: WardrobeItem): BodySlotKey | null {
-  if (!item || typeof item !== 'object' || !item.category) return null;
-  const bodySlot = resolveWardrobeBodySlot(item);
-
-  if (bodySlot === 'head') return 'head';
-  if (bodySlot === 'legs') return 'legs';
-  if (bodySlot === 'socks') return 'socks';
-  if (bodySlot === 'feet') return 'feet';
-  if (bodySlot === 'accessory') return 'accessory';
-  return 'torso';
-}
-
-function matchesSlot(item: WardrobeItem, slotKey: BodySlotKey): boolean {
-  return categoryToSlotKey(item) === slotKey;
-}
-
-function buildSelectionForControl(
-  slotKey: BodySlotKey,
-  nextItem: WardrobeItem | null,
-  activeIds: string[],
-  wardrobeItems: WardrobeItem[],
-): string[] {
-  if (slotKey === 'accessory') {
-    const accessoryIds = new Set(
-      wardrobeItems
-        .filter(item => matchesSlot(item, 'accessory'))
-        .map(item => item.id),
-    );
-    const selection = new Set(activeIds.filter(id => !accessoryIds.has(id)));
-    if (nextItem) selection.add(nextItem.id);
-    return normalizeWardrobeSelection(wardrobeItems, Array.from(selection));
+function resolveAvatarReadinessUi(state: 'ready' | 'needs_identity' | 'missing'): AvatarReadinessUi {
+  switch (state) {
+    case 'ready':
+      return {
+        title: 'Avatar is driving the preview',
+        copy: 'Looks now composes real wardrobe layers around your avatar base instead of floating items.',
+        ctaLabel: null,
+        action: null,
+      };
+    case 'needs_identity':
+      return {
+        title: 'Avatar base is ready',
+        copy: 'Add the full set of 5 identity photos so generation locks onto your face more reliably across AI flows.',
+        ctaLabel: 'Capture 5 photos',
+        action: 'identity',
+      };
+    default:
+      return {
+        title: 'Add an avatar first',
+        copy: 'Upload a profile photo so Looks has a visual base. After that, wardrobe items will render around your avatar.',
+        ctaLabel: 'Open Profile',
+        action: 'profile',
+      };
   }
-
-  const selection = new Set(activeIds);
-  const zoneIds = wardrobeItems.filter(item => matchesSlot(item, slotKey)).map(item => item.id);
-  for (const zoneId of zoneIds) {
-    selection.delete(zoneId);
-  }
-
-  if (!nextItem) {
-    return normalizeWardrobeSelection(wardrobeItems, Array.from(selection));
-  }
-
-  if (slotKey === 'legs') {
-    const torsoItem = wardrobeItems.find(item => selection.has(item.id) && matchesSlot(item, 'torso'));
-    if (torsoItem?.category === 'dress') {
-      selection.delete(torsoItem.id);
-    }
-  }
-
-  if (slotKey === 'torso' && nextItem.category === 'dress') {
-    for (const item of wardrobeItems) {
-      if (matchesSlot(item, 'legs')) selection.delete(item.id);
-    }
-  }
-
-  selection.add(nextItem.id);
-  return normalizeWardrobeSelection(wardrobeItems, Array.from(selection));
 }
 
 function createStyles(theme: ThemeTokens) {
@@ -630,6 +626,85 @@ function createStyles(theme: ThemeTokens) {
       borderWidth: 1,
       borderColor: theme.colors.border,
       padding: theme.spacing.xs,
+    },
+    statusCard: {
+      borderRadius: theme.radius.xl,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      padding: theme.spacing.md,
+      gap: theme.spacing.sm,
+    },
+    statusCopy: {
+      gap: 6,
+    },
+    statusTitle: {
+      color: theme.colors.text,
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '900',
+    },
+    statusText: {
+      color: theme.colors.textSecondary,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
+    statusAction: {
+      alignSelf: 'flex-start',
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.accentSoft,
+      borderWidth: 1,
+      borderColor: theme.colors.accentMuted,
+      paddingHorizontal: 14,
+      paddingVertical: 9,
+    },
+    statusActionText: {
+      color: theme.colors.accent,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    slotRail: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: theme.spacing.sm,
+    },
+    slotCard: {
+      flexGrow: 1,
+      minWidth: 140,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 11,
+      gap: 4,
+    },
+    slotCardMissing: {
+      borderColor: theme.colors.accentMuted,
+      backgroundColor: theme.colors.accentSoft,
+    },
+    slotLabel: {
+      color: theme.colors.textSecondary,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.5,
+    },
+    slotValue: {
+      color: theme.colors.text,
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '800',
+    },
+    slotValueMuted: {
+      color: theme.colors.textSecondary,
+    },
+    slotHelp: {
+      color: theme.colors.muted,
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '700',
     },
     bottomBar: {
       gap: theme.spacing.xs,

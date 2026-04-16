@@ -1,8 +1,9 @@
 import { readConfig } from '../../api/backend-config.js';
 import { generateGeminiContent } from '../../api/gemini-client.js';
 import { buildStylistReply } from '../../shared/chat';
+import { buildLookMissingSlotLabels } from '../../shared/look-preview';
 import { createOutfit, generateOutfitRecommendations } from '../../shared/outfits';
-import { getWardrobeItemColor, getWardrobeItemFullTitle } from '../../shared/wardrobe';
+import { getWardrobeItemColor, getWardrobeItemFullTitle, normalizeWardrobeSelection } from '../../shared/wardrobe';
 import { CalendarService } from '../../services/calendar-service.js';
 import {
   buildLookVariationRequest,
@@ -304,58 +305,22 @@ function resolveLookError(result: ReturnType<typeof generateOutfitRecommendation
 }
 
 function mergeWithFallback(selected: WardrobeItem[], fallback: WardrobeItem[]): WardrobeItem[] {
-  const merged = [...selected];
-
+  const combined = [...selected];
   for (const item of fallback) {
-    if (merged.some(entry => entry.id === item.id)) continue;
-    const hasDress = merged.some(entry => entry.category === 'dress');
-    const hasTop = merged.some(entry => entry.category === 'shirt' || entry.category === 'sweater' || entry.category === 'base');
-    const hasBottom = merged.some(entry => entry.category === 'pants');
-    const hasShoes = merged.some(entry => entry.category === 'shoes');
-    if (item.category === 'dress') {
-      if (hasDress || hasTop || hasBottom) continue;
-      merged.push(item);
-      continue;
+    if (!combined.some(entry => entry.id === item.id)) {
+      combined.push(item);
     }
-    if ((item.category === 'shirt' || item.category === 'sweater' || item.category === 'base')) {
-      if (merged.some(entry => entry.category === 'dress')) continue;
-      if (merged.some(entry => entry.category === 'shirt' || entry.category === 'sweater' || entry.category === 'base')) continue;
-      merged.push(item);
-      continue;
-    }
-    if (item.category === 'pants') {
-      if (merged.some(entry => entry.category === 'dress' || entry.category === 'pants')) continue;
-      merged.push(item);
-      continue;
-    }
-    if (item.category === 'shoes') {
-      if (hasShoes || merged.some(entry => entry.category === 'shoes')) continue;
-      merged.push(item);
-      continue;
-    }
-    if (merged.some(entry => entry.category === item.category)) continue;
-    merged.push(item);
   }
 
-  return merged;
+  const itemsById = new Map(combined.map(item => [item.id, item]));
+  const normalizedIds = normalizeWardrobeSelection(combined, combined.map(item => item.id));
+  return normalizedIds
+    .map(id => itemsById.get(id))
+    .filter((item): item is WardrobeItem => Boolean(item));
 }
 
 function inferMissingItems(garments: WardrobeItem[]): string[] {
-  const hasDress = garments.some(item => item.category === 'dress');
-  const hasTop = garments.some(item => item.category === 'shirt' || item.category === 'sweater' || item.category === 'base');
-  const hasBottom = garments.some(item => item.category === 'pants');
-  const hasShoes = garments.some(item => item.category === 'shoes');
-  const missing: string[] = [];
-
-  if (hasDress) {
-    if (!hasShoes) missing.push('shoes');
-    return missing;
-  }
-
-  if (!hasTop) missing.push('a top');
-  if (!hasBottom) missing.push('bottoms');
-  if (!hasShoes) missing.push('shoes');
-  return missing;
+  return buildLookMissingSlotLabels(garments);
 }
 
 function buildCompletionPrompt(missingItems: string[]): string {

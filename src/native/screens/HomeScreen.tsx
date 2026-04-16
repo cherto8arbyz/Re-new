@@ -10,12 +10,13 @@ import {
 } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
-import MaterialCommunityIcons from 'expo/node_modules/@expo/vector-icons/MaterialCommunityIcons';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 import { buildDefaultTryOnOutfit } from '../../shared/outfits';
+import { resolveAvatarPreviewUrl } from '../../shared/look-preview';
 import { type AppTab } from '../../types/models';
 import { DayWeatherCarousel } from '../components/DayWeatherCarousel';
+import { OutfitPreviewCanvas } from '../components/OutfitPreviewCanvas';
 import { useAppContext } from '../context/AppContext';
 import type { RootStackParamList } from '../navigation/types';
 import { type ThemeTokens } from '../theme';
@@ -88,8 +89,8 @@ function HomeDashboard() {
 
   const completionPrompt = String(todayOutfit?.renderMetadata?.completionPrompt || '').trim();
   const helperCopy = todayOutfit
-    ? (completionPrompt || 'Your wardrobe already has enough to render a clean look on the mannequin.')
-    : 'Add a few key pieces and the mannequin will start shaping the look for you.';
+    ? (completionPrompt || 'Your avatar preview is pulling from the actual wardrobe layers already synced in the app.')
+    : 'Add a few key pieces and your avatar preview will start shaping the look around them.';
 
   return (
     <ScrollView contentContainerStyle={styles.dashboardContent} showsVerticalScrollIndicator={false}>
@@ -123,7 +124,7 @@ function HomeDashboard() {
         </View>
 
         <View style={styles.heroCanvasWrap}>
-          <ComingSoonStudioPanel />
+          <HomeAvatarStudioPanel outfit={todayOutfit} />
         </View>
       </View>
 
@@ -141,10 +142,11 @@ function HomeDashboard() {
   );
 }
 
-function ComingSoonStudioPanel() {
-  const { theme } = useAppContext();
+function HomeAvatarStudioPanel({ outfit }: { outfit: ReturnType<typeof buildDefaultTryOnOutfit> }) {
+  const { state, theme } = useAppContext();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const pulse = useRef(new Animated.Value(0)).current;
+  const avatarUrl = resolveAvatarPreviewUrl(state.user);
 
   useEffect(() => {
     const loop = Animated.loop(
@@ -210,24 +212,47 @@ function ComingSoonStudioPanel() {
       <Animated.View style={[styles.comingSoonGlowSmall, orbStyle]} />
       <View style={styles.comingSoonBadge}>
         <Ionicons name="sparkles-outline" size={14} color={theme.colors.accent} />
-        <Text style={styles.comingSoonBadgeText}>Coming soon</Text>
+        <Text style={styles.comingSoonBadgeText}>Avatar preview</Text>
       </View>
-      <Text style={styles.comingSoonTitle}>Studio refresh</Text>
-      <Text style={styles.comingSoonText}>
-        The large daily outfit preview is being rebuilt into a sharper editor-style scene.
-      </Text>
-      <Animated.View style={[styles.comingSoonSignal, signalStyle]} />
-      <View style={styles.comingSoonIconRow}>
-        <View style={styles.comingSoonIconChip}>
-          <MaterialCommunityIcons name="hanger" size={20} color={theme.colors.text} />
-        </View>
-        <View style={styles.comingSoonIconChip}>
-          <Ionicons name="sparkles" size={18} color={theme.colors.accent} />
-        </View>
-        <View style={styles.comingSoonIconChip}>
-          <Ionicons name="layers-outline" size={18} color={theme.colors.textSecondary} />
-        </View>
-      </View>
+      {outfit || avatarUrl ? (
+        <>
+          <Text style={styles.comingSoonTitle}>Today on your avatar</Text>
+          <Text style={styles.comingSoonText}>
+            {outfit
+              ? 'This preview uses your current outfit stack and wardrobe layers as the base scene.'
+              : 'Upload clothes or generate a look to start dressing the avatar scene.'}
+          </Text>
+          <Animated.View style={[styles.comingSoonSignal, signalStyle]} />
+          <View style={styles.heroPreviewCard}>
+            <OutfitPreviewCanvas
+              outfit={outfit}
+              avatarUrl={avatarUrl}
+              theme={theme}
+              size="large"
+              label={outfit?.styleName || 'Avatar base'}
+            />
+          </View>
+        </>
+      ) : (
+        <>
+          <Text style={styles.comingSoonTitle}>Avatar base missing</Text>
+          <Text style={styles.comingSoonText}>
+            Upload a profile photo first, then your wardrobe pieces will start appearing on top of the avatar preview.
+          </Text>
+          <Animated.View style={[styles.comingSoonSignal, signalStyle]} />
+          <View style={styles.comingSoonIconRow}>
+            <View style={styles.comingSoonIconChip}>
+              <MaterialCommunityIcons name="hanger" size={20} color={theme.colors.text} />
+            </View>
+            <View style={styles.comingSoonIconChip}>
+              <Ionicons name="person-outline" size={18} color={theme.colors.accent} />
+            </View>
+            <View style={styles.comingSoonIconChip}>
+              <Ionicons name="layers-outline" size={18} color={theme.colors.textSecondary} />
+            </View>
+          </View>
+        </>
+      )}
     </View>
   );
 }
@@ -256,6 +281,7 @@ function createStyles(theme: ThemeTokens) {
     safe: {
       flex: 1,
       backgroundColor: theme.colors.background,
+      overflow: 'hidden',
     },
     backgroundOrbOne: {
       position: 'absolute',
@@ -290,6 +316,8 @@ function createStyles(theme: ThemeTokens) {
     },
     contentShell: {
       flex: 1,
+      width: '100%',
+      minWidth: 0,
       paddingHorizontal: theme.spacing.md,
       paddingTop: theme.spacing.sm,
     },
@@ -362,6 +390,9 @@ function createStyles(theme: ThemeTokens) {
       alignItems: 'center',
       justifyContent: 'center',
       paddingVertical: 4,
+    },
+    heroPreviewCard: {
+      alignSelf: 'center',
     },
     comingSoonPanel: {
       width: '100%',
@@ -474,6 +505,8 @@ function createStyles(theme: ThemeTokens) {
       fontWeight: '700',
     },
     tabBarWrap: {
+      width: '100%',
+      minWidth: 0,
       paddingHorizontal: theme.spacing.md,
       paddingBottom: theme.spacing.md,
       paddingTop: theme.spacing.sm,

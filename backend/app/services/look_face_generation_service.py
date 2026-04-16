@@ -61,53 +61,110 @@ class LookFaceGenerationService:
     return image
 
   def _render_portrait(self, source: np.ndarray) -> np.ndarray:
-    target_w = 640
-    target_h = 800
+    target_w = 768
+    target_h = 1080
 
     base = np.zeros((target_h, target_w, 3), dtype=np.uint8)
     for y in range(target_h):
       blend = y / max(1, target_h - 1)
-      r = int((232 * (1 - blend)) + (156 * blend))
-      g = int((236 * (1 - blend)) + (164 * blend))
-      b = int((242 * (1 - blend)) + (173 * blend))
+      r = int((248 * (1 - blend)) + (224 * blend))
+      g = int((242 * (1 - blend)) + (220 * blend))
+      b = int((246 * (1 - blend)) + (236 * blend))
       base[y, :, :] = (b, g, r)
 
-    src_h, src_w = source.shape[:2]
-    scale = min((target_w * 0.78) / max(1, src_w), (target_h * 0.72) / max(1, src_h))
-    scaled_w = max(1, int(src_w * scale))
-    scaled_h = max(1, int(src_h * scale))
-    resized = cv2.resize(source, (scaled_w, scaled_h), interpolation=cv2.INTER_LANCZOS4)
-    resized = cv2.convertScaleAbs(resized, alpha=1.06, beta=6)
+    ambient = np.zeros_like(base)
+    cv2.circle(ambient, (int(target_w * 0.78), int(target_h * 0.16)), int(target_w * 0.16), (222, 201, 255), -1)
+    cv2.circle(ambient, (int(target_w * 0.22), int(target_h * 0.78)), int(target_w * 0.15), (239, 225, 255), -1)
+    ambient = cv2.GaussianBlur(ambient, (0, 0), sigmaX=70, sigmaY=70)
+    base = cv2.addWeighted(base, 1.0, ambient, 0.26, 0)
 
-    x = (target_w - scaled_w) // 2
-    y = int(target_h * 0.12)
-    y = min(max(0, y), max(0, target_h - scaled_h))
-
-    mask = np.zeros((scaled_h, scaled_w), dtype=np.float32)
-    center = (scaled_w // 2, int(scaled_h * 0.46))
-    axes = (int(scaled_w * 0.43), int(scaled_h * 0.54))
-    cv2.ellipse(mask, center, axes, 0, 0, 360, color=1.0, thickness=-1)
-    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=22, sigmaY=22)
-    mask = np.clip(mask, 0.0, 1.0)
-    mask3 = np.dstack([mask, mask, mask]).astype(np.float32)
-
-    roi = base[y:y + scaled_h, x:x + scaled_w].astype(np.float32)
-    fg = resized.astype(np.float32)
-    blended = (fg * mask3) + (roi * (1.0 - mask3))
-    base[y:y + scaled_h, x:x + scaled_w] = np.clip(blended, 0, 255).astype(np.uint8)
-
-    glow = np.zeros_like(base)
+    shadow = np.zeros_like(base)
     cv2.ellipse(
-      glow,
-      (target_w // 2, int(target_h * 0.2)),
-      (int(target_w * 0.34), int(target_h * 0.16)),
+      shadow,
+      (target_w // 2, int(target_h * 0.88)),
+      (int(target_w * 0.16), int(target_h * 0.03)),
       0,
       0,
       360,
-      color=(255, 255, 255),
-      thickness=-1,
+      (86, 74, 108),
+      -1,
     )
-    glow = cv2.GaussianBlur(glow, (0, 0), sigmaX=36, sigmaY=36)
-    base = cv2.addWeighted(base, 1.0, glow, 0.12, 0)
+    shadow = cv2.GaussianBlur(shadow, (0, 0), sigmaX=28, sigmaY=18)
+    base = cv2.addWeighted(base, 1.0, shadow, 0.22, 0)
+
+    silhouette = np.zeros_like(base)
+    shell_color = (110, 97, 143)
+    shell_highlight = (133, 118, 168)
+
+    cv2.ellipse(silhouette, (target_w // 2, int(target_h * 0.33)), (int(target_w * 0.19), int(target_h * 0.085)), 0, 0, 360, shell_color, -1)
+    cv2.rectangle(
+      silhouette,
+      (int(target_w * 0.33), int(target_h * 0.34)),
+      (int(target_w * 0.67), int(target_h * 0.62)),
+      shell_color,
+      -1,
+    )
+    cv2.ellipse(silhouette, (target_w // 2, int(target_h * 0.62)), (int(target_w * 0.17), int(target_h * 0.08)), 0, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.29), int(target_h * 0.44)), (int(target_w * 0.07), int(target_h * 0.19)), 8, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.71), int(target_h * 0.44)), (int(target_w * 0.07), int(target_h * 0.19)), -8, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.43), int(target_h * 0.79)), (int(target_w * 0.06), int(target_h * 0.18)), 3, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.57), int(target_h * 0.79)), (int(target_w * 0.06), int(target_h * 0.18)), -3, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.43), int(target_h * 0.93)), (int(target_w * 0.07), int(target_h * 0.025)), 0, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (int(target_w * 0.57), int(target_h * 0.93)), (int(target_w * 0.07), int(target_h * 0.025)), 0, 0, 360, shell_color, -1)
+    cv2.ellipse(silhouette, (target_w // 2, int(target_h * 0.46)), (int(target_w * 0.13), int(target_h * 0.19)), 0, 0, 360, shell_highlight, -1)
+    silhouette = cv2.GaussianBlur(silhouette, (0, 0), sigmaX=4, sigmaY=4)
+    base = cv2.addWeighted(base, 1.0, silhouette, 0.62, 0)
+
+    head_size = (int(target_w * 0.20), int(target_h * 0.15))
+    face = self._prepare_face_crop(source, head_size[0], head_size[1])
+    face_x = (target_w - head_size[0]) // 2
+    face_y = int(target_h * 0.10)
+    self._composite_face(base, face, face_x, face_y)
+
+    rim = np.zeros_like(base)
+    cv2.ellipse(
+      rim,
+      (target_w // 2, face_y + head_size[1] // 2),
+      (int(head_size[0] * 0.60), int(head_size[1] * 0.56)),
+      0,
+      0,
+      360,
+      (255, 255, 255),
+      6,
+    )
+    rim = cv2.GaussianBlur(rim, (0, 0), sigmaX=3, sigmaY=3)
+    base = cv2.addWeighted(base, 1.0, rim, 0.38, 0)
 
     return base
+
+  def _prepare_face_crop(self, source: np.ndarray, target_w: int, target_h: int) -> np.ndarray:
+    src_h, src_w = source.shape[:2]
+    if src_h <= 0 or src_w <= 0:
+      return np.zeros((target_h, target_w, 3), dtype=np.uint8)
+
+    crop_size = min(src_h, src_w)
+    x = max(0, (src_w - crop_size) // 2)
+    y = max(0, (src_h - crop_size) // 2)
+    cropped = source[y:y + crop_size, x:x + crop_size]
+    resized = cv2.resize(cropped, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
+    return cv2.convertScaleAbs(resized, alpha=1.06, beta=4)
+
+  def _composite_face(self, canvas: np.ndarray, face: np.ndarray, x: int, y: int) -> None:
+    face_h, face_w = face.shape[:2]
+    mask = np.zeros((face_h, face_w), dtype=np.float32)
+    cv2.ellipse(
+      mask,
+      (face_w // 2, int(face_h * 0.52)),
+      (int(face_w * 0.40), int(face_h * 0.46)),
+      0,
+      0,
+      360,
+      1.0,
+      -1,
+    )
+    mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=5, sigmaY=5)
+    mask3 = np.dstack([mask, mask, mask]).astype(np.float32)
+
+    roi = canvas[y:y + face_h, x:x + face_w].astype(np.float32)
+    blended = (face.astype(np.float32) * mask3) + (roi * (1.0 - mask3))
+    canvas[y:y + face_h, x:x + face_w] = np.clip(blended, 0, 255).astype(np.uint8)

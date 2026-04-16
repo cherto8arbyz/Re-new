@@ -1,4 +1,5 @@
 import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
+import type { AvatarGender } from '../../types/models';
 
 export type DailyLookJobStatus =
   | 'idle'
@@ -34,7 +35,7 @@ export interface DailyLookGenerateInput {
   accessToken: string;
   availableGarments: DailyLookAvailableGarmentInput[];
   weatherContext: DailyLookWeatherContextInput;
-  gender?: string;
+  gender?: AvatarGender;
 }
 
 export interface DailyLookGenerateResponse {
@@ -66,6 +67,8 @@ export class DailyLookApiError extends Error {
   }
 }
 
+const uploadedDailyLookImageCache = new Map<string, string>();
+
 export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Promise<DailyLookGenerateResponse> {
   const baseUrl = resolveBackendBaseUrl({ preferProxy: false });
   const accessToken = String(input.accessToken || '').trim();
@@ -74,6 +77,14 @@ export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Pr
   }
   if (!accessToken) {
     throw new DailyLookApiError('Authentication token is missing.', 401);
+  }
+
+  const resolvedGarments = await resolveDailyLookGarmentsAsync(baseUrl, input.availableGarments);
+  if (input.availableGarments.length > 0 && resolvedGarments.length === 0) {
+    throw new DailyLookApiError(
+      'Wardrobe images could not be synced to the image pipeline, so no paid AI request was sent. Reopen Wardrobe and try the garment upload again.',
+      0,
+    );
   }
 
   const response = await fetch(`${baseUrl}/api/v1/daily-look/generate`, {
@@ -85,7 +96,7 @@ export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Pr
     body: JSON.stringify({
       ...(input.gender ? { gender: input.gender } : {}),
       weather_context: input.weatherContext,
-      available_garments: input.availableGarments,
+      available_garments: resolvedGarments,
     }),
   });
 
@@ -99,6 +110,67 @@ export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Pr
     status: normalizeDailyLookJobStatus(payload?.status),
     selectedGarmentIds: normalizeStringArray(payload?.selected_garment_ids),
   };
+}
+
+async function resolveDailyLookGarmentsAsync(
+  baseUrl: string,
+  garments: DailyLookAvailableGarmentInput[],
+): Promise<DailyLookAvailableGarmentInput[]> {
+  const resolved = await Promise.all(garments.map(async garment => {
+    const imageUrl = await ensureResolvableGarmentImageUrlAsync(baseUrl, garment.image_url, garment.garment_id);
+    if (!imageUrl) return null;
+    return {
+      ...garment,
+      image_url: imageUrl,
+    };
+  }));
+
+  return resolved.filter((garment): garment is DailyLookAvailableGarmentInput => Boolean(garment));
+}
+
+async function ensureResolvableGarmentImageUrlAsync(
+  baseUrl: string,
+  imageReference: string,
+  garmentId: string,
+): Promise<string> {
+  const normalizedReference = String(imageReference || '').trim();
+  if (!normalizedReference) return '';
+  if (isRemoteHttpUrl(normalizedReference) || isDataUrl(normalizedReference)) {
+    return normalizedReference;
+  }
+
+  const cached = uploadedDailyLookImageCache.get(normalizedReference);
+  if (cached) return cached;
+
+  const uploadedUrl = await uploadLocalGarmentReferenceAsync(baseUrl, normalizedReference, garmentId);
+  if (uploadedUrl) {
+    uploadedDailyLookImageCache.set(normalizedReference, uploadedUrl);
+  }
+  return uploadedUrl;
+}
+
+async function uploadLocalGarmentReferenceAsync(
+  baseUrl: string,
+  uri: string,
+  garmentId: string,
+): Promise<string> {
+  const formData = new FormData();
+  formData.append('file', {
+    uri,
+    name: buildGarmentUploadFileName(uri, garmentId),
+    type: resolveGarmentUploadMimeType(uri),
+  } as unknown as Blob);
+
+  const response = await fetch(`${baseUrl}/api/v1/upload`, {
+    method: 'POST',
+    body: formData,
+  });
+  const payload = await parseJsonSafely(response);
+  if (!response.ok) {
+    return '';
+  }
+
+  return typeof payload?.url === 'string' ? payload.url.trim() : '';
 }
 
 export async function fetchDailyLookJobAsync(input: {
@@ -160,6 +232,30 @@ export function normalizeDailyLookJobStatus(value: unknown): DailyLookJobStatus 
     default:
       return 'idle';
   }
+}
+
+function isRemoteHttpUrl(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized.startsWith('http://') || normalized.startsWith('https://');
+}
+
+function isDataUrl(value: string): boolean {
+  return value.trim().toLowerCase().startsWith('data:');
+}
+
+function buildGarmentUploadFileName(uri: string, garmentId: string): string {
+  const fromUri = uri.split('?')[0]?.split('/').pop() || '';
+  const sanitized = fromUri.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  if (sanitized) return sanitized;
+  const safeId = String(garmentId || 'garment').replace(/[^a-zA-Z0-9_-]+/g, '-');
+  return `${safeId || 'garment'}.jpg`;
+}
+
+function resolveGarmentUploadMimeType(uri: string): string {
+  const normalized = uri.trim().toLowerCase();
+  if (normalized.endsWith('.png')) return 'image/png';
+  if (normalized.endsWith('.webp')) return 'image/webp';
+  return 'image/jpeg';
 }
 
 function normalizeStringArray(value: unknown): string[] {

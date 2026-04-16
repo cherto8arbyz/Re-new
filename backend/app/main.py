@@ -404,6 +404,7 @@ async def generate_daily_look(
   payload: DailyLookGenerateRequest,
   current_user: AuthenticatedUser = Depends(get_authenticated_user),
 ) -> DailyLookGenerateResponse:
+  avatar_gender = _normalize_avatar_gender(payload.gender)
   weather_context = _serialize_weather_context(payload.weather_context)
   available_garments = [_to_pipeline_garment(item) for item in payload.available_garments]
   recommendation = outfit_recommendation_service.recommend(
@@ -415,8 +416,18 @@ async def generate_daily_look(
     user_id=current_user.user_id,
     selected_garment_ids=selected_garment_ids,
     weather_context=weather_context,
+    avatar_gender=avatar_gender,
   )
   if reusable_job is not None:
+    resume_task = daily_look_job_service.start_pending_face_swap_resume_task(
+      job_id=reusable_job.id,
+      public_base_url=_resolve_public_base_url(request),
+    )
+    if resume_task is not None:
+      _track_task(resume_task)
+      refreshed_job = daily_look_job_service.get_job(reusable_job.id)
+      if refreshed_job is not None:
+        reusable_job = refreshed_job
     logger.info("daily_look_job_reused job_id=%s user_id=%s", reusable_job.id, current_user.user_id)
     return DailyLookGenerateResponse(
       job_id=reusable_job.id,
@@ -428,13 +439,14 @@ async def generate_daily_look(
     user_id=current_user.user_id,
     selected_garment_ids=selected_garment_ids,
     weather_context=weather_context,
+    avatar_gender=avatar_gender,
   )
   task = asyncio.create_task(
     daily_look_job_service.process_job(
       job_id=job.id,
       request=FullLookPipelineRequest(
         user_id=current_user.user_id,
-        gender=payload.gender,
+        gender=avatar_gender,
         weather_context=weather_context,
         garments=recommendation.selected_garments,
       ),
@@ -451,6 +463,7 @@ async def generate_daily_look(
 
 @app.get("/api/v1/daily-look/jobs/{job_id}", response_model=DailyLookJobResponse)
 async def get_daily_look_job(
+  request: Request,
   job_id: str,
   current_user: AuthenticatedUser = Depends(get_authenticated_user),
 ) -> DailyLookJobResponse:
@@ -459,6 +472,16 @@ async def get_daily_look_job(
     raise HTTPException(status_code=404, detail="Daily look job not found.")
   if job.user_id != current_user.user_id:
     raise HTTPException(status_code=404, detail="Daily look job not found.")
+
+  resume_task = daily_look_job_service.start_pending_face_swap_resume_task(
+    job_id=job.id,
+    public_base_url=_resolve_public_base_url(request),
+  )
+  if resume_task is not None:
+    _track_task(resume_task)
+    refreshed_job = daily_look_job_service.get_job(job.id)
+    if refreshed_job is not None:
+      job = refreshed_job
 
   return DailyLookJobResponse(
     id=job.id,
@@ -593,6 +616,7 @@ async def face_detect(file: UploadFile = File(...)) -> dict[str, Any]:
 
 @app.post("/api/image/look-face-generate")
 async def look_face_generate(
+  request: Request,
   file: UploadFile = File(...),
   face_crop: UploadFile | None = File(default=None),
   face_metrics_json: str = Form(default="{}"),
@@ -608,6 +632,10 @@ async def look_face_generate(
   face_crop_bytes = None
   if face_crop is not None:
     face_crop_bytes = await face_crop.read()
+  if not face_crop_bytes:
+    detection = face_service.detect_face(original_bytes)
+    if detection.success and detection.face_detected and detection.cropped_face_bytes:
+      face_crop_bytes = detection.cropped_face_bytes
 
   result = look_face_service.generate(
     original_image_bytes=original_bytes,
@@ -623,12 +651,21 @@ async def look_face_generate(
   if not result.success:
     return {
       "success": False,
+      "look_face_url": "",
       "look_face_data_url": "",
       "error": result.error or "Look face generation failed.",
     }
 
+  stored_asset = storage_service.save_upload(
+    file_bytes=result.image_bytes,
+    original_filename="look-face.png",
+    content_type=result.content_type,
+    base_url=_resolve_public_base_url(request),
+  )
+
   return {
     "success": True,
+    "look_face_url": stored_asset.public_url,
     "look_face_data_url": to_data_url(result.image_bytes, result.content_type),
     "error": result.error,
   }
@@ -660,6 +697,10 @@ def _normalize_upgrade_context(value: str | None) -> str:
   if normalized in {"ai_looks", "ai-looks", "ai"}:
     return "ai_looks"
   raise HTTPException(status_code=400, detail="Unsupported upgrade context.")
+
+
+def _normalize_avatar_gender(value: str | None) -> str:
+  return "male" if str(value or "").strip().lower() == "male" else "female"
 
 
 def _track_task(task: asyncio.Task[Any]) -> None:

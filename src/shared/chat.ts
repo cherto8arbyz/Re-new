@@ -1,4 +1,5 @@
 import type { AppState, ChatMessage, Outfit, WardrobeItem } from '../types/models';
+import { buildLookMissingSlotLabels } from './look-preview';
 import { buildDefaultTryOnOutfit } from './outfits';
 import { createId, getWardrobeItemFullTitle } from './wardrobe';
 
@@ -107,16 +108,7 @@ function getCompletionPrompt(outfit: Outfit): string {
 }
 
 function getMissingCoreCategories(items: WardrobeItem[]): string[] {
-  const hasDress = items.some(item => item.category === 'dress');
-  const hasTop = items.some(item => item.category === 'shirt' || item.category === 'sweater' || item.category === 'base');
-  const hasBottom = items.some(item => item.category === 'pants');
-  const hasShoes = items.some(item => item.category === 'shoes');
-  const missing: string[] = [];
-
-  if (!hasDress && !hasTop) missing.push('a top');
-  if (!hasDress && !hasBottom) missing.push('bottoms');
-  if (!hasShoes) missing.push('shoes');
-  return missing;
+  return buildLookMissingSlotLabels(items);
 }
 
 function joinHuman(values: (string | null | undefined)[]): string {

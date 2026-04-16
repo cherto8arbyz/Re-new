@@ -1,18 +1,23 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from pathlib import Path
 
 import cv2
 from fastapi.testclient import TestClient
 import numpy as np
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 
 import app.main as main_module
 from app.auth import AuthenticatedUser, get_authenticated_user
+from app.db import Base
 from app.main import app
 from app.services.face_detection_service import FaceDetectionResult
 from app.services.identity_reference_service import IdentityReferenceService
 from app.services.local_storage_service import LocalStorageService
+from app.services.user_profile_service import UserProfileService
 
 
 def _build_test_image_bytes() -> bytes:
@@ -64,6 +69,15 @@ def _no_face_result() -> FaceDetectionResult:
     cropped_face_bytes=b"",
     error="Face not detected clearly. Please upload a better photo.",
   )
+
+
+def _make_session_factory(tmp_path: Path) -> sessionmaker:
+  engine = create_engine(
+    f"sqlite:///{(tmp_path / 'identity-upload.db').as_posix()}",
+    connect_args={"check_same_thread": False},
+  )
+  Base.metadata.create_all(bind=engine)
+  return sessionmaker(bind=engine, autocommit=False, autoflush=False, expire_on_commit=False)
 
 
 @pytest.fixture()
@@ -131,7 +145,7 @@ def test_upload_reference_returns_400_when_any_photo_has_no_face(
   assert payload["detail"]["failed_index"] == 4
   assert payload["detail"]["error_code"] == "identity_face_not_found"
   assert "No face detected" in payload["detail"]["message"]
-  assert not any(tmp_path.rglob("*.webp"))
+  assert not any(Path(tmp_path).rglob("*.webp"))
 
 
 @pytest.mark.parametrize("photo_count", [4, 6])
@@ -158,3 +172,33 @@ def test_upload_reference_returns_400_when_photo_count_is_not_exactly_five(
   payload = response.json()
   assert payload["detail"]["error_code"] == "identity_photo_count_invalid"
   assert payload["detail"]["message"] == "Exactly 5 identity photos are required."
+
+
+def test_upload_reference_persists_five_urls_for_authenticated_user(
+  identity_test_client: TestClient,
+  tmp_path: str,
+  monkeypatch: pytest.MonkeyPatch,
+) -> None:
+  monkeypatch.setattr(main_module.face_service, "detect_face", lambda _: _valid_face_result())
+
+  session_factory = _make_session_factory(Path(tmp_path))
+  test_user_profile_service = UserProfileService(session_factory)
+  monkeypatch.setattr(main_module, "user_profile_service", test_user_profile_service)
+
+  image_bytes = _build_test_image_bytes()
+  files = [
+    ("files", (f"reference-{index + 1}.jpg", image_bytes, "image/jpeg"))
+    for index in range(5)
+  ]
+
+  response = identity_test_client.post(
+    "/api/v1/identity/upload-reference",
+    headers={"Authorization": "Bearer header.payload.signature"},
+    files=files,
+  )
+
+  assert response.status_code == 200, response.text
+  payload = response.json()
+  assert payload["uploaded_count"] == 5
+  assert len(payload["reference_urls"]) == 5
+  assert test_user_profile_service.get_reference_face_urls("user-123") == payload["reference_urls"]

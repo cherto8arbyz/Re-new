@@ -47,11 +47,13 @@ class DailyLookJob(Base):
   id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
   user_id: Mapped[str] = mapped_column(ForeignKey("user_profiles.user_id"), nullable=False, index=True)
   status: Mapped[str] = mapped_column(String(32), nullable=False, default="processing")
+  avatar_gender: Mapped[str] = mapped_column(String(32), nullable=False, default="female")
   selected_garment_ids: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
   weather_context: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False, default=dict)
   prompt: Mapped[str | None] = mapped_column(Text, nullable=True)
   final_image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
   error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
+  face_swap_request_id: Mapped[str | None] = mapped_column(Text, nullable=True)
   created_at: Mapped[datetime] = mapped_column(
     DateTime(timezone=True),
     nullable=False,

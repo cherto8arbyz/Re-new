@@ -1,6 +1,8 @@
 import {
+  type AccessoryRole,
   GARMENT_CATEGORIES,
   type BodySlot,
+  type ClothingSlot,
   type GarmentCategory,
   type GarmentPosition,
   type ReviewState,
@@ -8,19 +10,25 @@ import {
   type WardrobeFilterState,
   type WardrobeItem,
 } from '../types/models';
+import {
+  readClothingMarker,
+  resolveAccessoryRole,
+  resolveBodySlotFromClothing,
+  resolveClothingSlot,
+} from './clothing-taxonomy';
 
 export const CATEGORY_ORDER: GarmentCategory[] = ['shirt', 'sweater', 'outerwear', 'dress', 'pants', 'socks', 'shoes', 'accessory', 'base'];
 
 export const CATEGORY_Z_INDEX: Record<GarmentCategory, number> = {
-  base: 0,
-  pants: 1,
-  socks: 1,
-  shoes: 1,
-  shirt: 2,
-  dress: 2,
-  sweater: 3,
-  outerwear: 4,
-  accessory: 5,
+  base: 10,
+  pants: 20,
+  dress: 24,
+  socks: 30,
+  shoes: 40,
+  shirt: 45,
+  sweater: 50,
+  outerwear: 60,
+  accessory: 70,
 };
 
 export const WARDROBE_ZONE_ORDER: BodySlot[] = ['head', 'torso', 'legs', 'socks', 'feet', 'accessory'];
@@ -234,7 +242,6 @@ const COLOR_KEYWORDS: { pattern: RegExp; label: string }[] = [
   { pattern: /\b(yellow|mustard)\b/i, label: 'yellow' },
 ];
 
-const HEAD_KEYWORDS = /\b(hat|cap|beanie|beret|bucket hat|headband|headwear)\b/i;
 const HAT_KEYWORDS = /\b(hat|cap|beanie|beret|bucket hat|trucker cap|visor|headband|headwear)\b/i;
 const FACE_ACCESSORY_KEYWORDS = /\b(sunglasses|glasses)\b/i;
 const SCARF_KEYWORDS = /\b(scarf|necklace|chain|tie)\b/i;
@@ -260,6 +267,8 @@ export interface WardrobeItemDraft {
   fullTitle?: string;
   category: GarmentCategory;
   subcategory?: string;
+  clothingSlot?: ClothingSlot;
+  accessoryRole?: AccessoryRole;
   imageUrl?: string;
   thumbnailUrl?: string;
   iconName?: string;
@@ -299,33 +308,48 @@ export function normalizeWardrobeCategory(value: string): GarmentCategory | null
 }
 
 export function inferBodySlot(category: GarmentCategory): BodySlot {
-  switch (category) {
-    case 'pants':
-      return 'legs';
-    case 'socks':
-      return 'socks';
-    case 'shoes':
-      return 'feet';
-    case 'accessory':
-      return 'accessory';
-    default:
-      return 'torso';
-  }
+  return resolveBodySlotFromClothing({ category });
 }
 
-export function resolveWardrobeBodySlot(input: Pick<WardrobeItemDraft, 'category' | 'subcategory' | 'name' | 'title' | 'bodySlot'>): BodySlot {
-  if (input.bodySlot === 'head' || input.bodySlot === 'torso' || input.bodySlot === 'legs' || input.bodySlot === 'socks' || input.bodySlot === 'feet' || input.bodySlot === 'accessory') {
-    return input.bodySlot;
-  }
+export function resolveWardrobeBodySlot(input: Pick<WardrobeItemDraft, 'category' | 'subcategory' | 'name' | 'title' | 'shortTitle' | 'fullTitle' | 'bodySlot' | 'clothingSlot' | 'accessoryRole'>): BodySlot {
+  return resolveBodySlotFromClothing({
+    category: input.category,
+    subcategory: input.subcategory,
+    name: input.name,
+    title: input.title,
+    shortTitle: input.shortTitle,
+    fullTitle: input.fullTitle,
+    bodySlot: input.bodySlot,
+    clothingSlot: input.clothingSlot,
+    accessoryRole: input.accessoryRole,
+  });
+}
 
-  if (input.category === 'pants') return 'legs';
-  if (input.category === 'socks') return 'socks';
-  if (input.category === 'shoes') return 'feet';
-  if (input.category !== 'accessory') return 'torso';
+export function resolveWardrobeClothingSlot(input: Pick<WardrobeItemDraft, 'category' | 'subcategory' | 'name' | 'title' | 'shortTitle' | 'fullTitle' | 'bodySlot' | 'clothingSlot' | 'accessoryRole'>): ClothingSlot {
+  return resolveClothingSlot({
+    category: input.category,
+    subcategory: input.subcategory,
+    name: input.name,
+    title: input.title,
+    shortTitle: input.shortTitle,
+    fullTitle: input.fullTitle,
+    bodySlot: input.bodySlot,
+    clothingSlot: input.clothingSlot,
+    accessoryRole: input.accessoryRole,
+  });
+}
 
-  const marker = readWardrobeMarker(input);
-  if (HEAD_KEYWORDS.test(marker) || FACE_ACCESSORY_KEYWORDS.test(marker)) return 'head';
-  return 'accessory';
+export function resolveWardrobeAccessoryRole(input: Pick<WardrobeItemDraft, 'category' | 'subcategory' | 'name' | 'title' | 'shortTitle' | 'fullTitle' | 'bodySlot' | 'accessoryRole'>): AccessoryRole | undefined {
+  return resolveAccessoryRole({
+    category: input.category,
+    subcategory: input.subcategory,
+    name: input.name,
+    title: input.title,
+    shortTitle: input.shortTitle,
+    fullTitle: input.fullTitle,
+    bodySlot: input.bodySlot,
+    accessoryRole: input.accessoryRole,
+  });
 }
 
 export function createId(prefix: string): string {
@@ -365,34 +389,22 @@ export function getWardrobeItemFullTitle(item: Pick<WardrobeItem, 'shortTitle' |
 }
 
 export function getWardrobeItemCategoryPreview(
-  item: Pick<WardrobeItem, 'category' | 'subcategory' | 'name' | 'title' | 'fullTitle' | 'bodySlot'>,
+  item: Pick<WardrobeItem, 'category' | 'subcategory' | 'name' | 'title' | 'shortTitle' | 'fullTitle' | 'bodySlot' | 'clothingSlot' | 'accessoryRole'>,
 ): string {
-  const marker = readWardrobeMarker(item);
+  const slot = resolveWardrobeClothingSlot(item);
+  const role = resolveWardrobeAccessoryRole(item);
 
-  switch (item.category) {
-    case 'base':
-    case 'shirt':
-      return 'Top';
-    case 'sweater':
-      return 'Knitwear';
-    case 'outerwear':
-      return 'Outerwear';
-    case 'dress':
-      return 'Dress';
-    case 'pants':
-      return 'Bottom';
-    case 'socks':
-      return 'Socks';
-    case 'shoes':
-      return 'Shoes';
-    case 'accessory':
-      if (FACE_ACCESSORY_KEYWORDS.test(marker)) return 'Accessory';
-      if (item.bodySlot === 'head' || HAT_KEYWORDS.test(marker)) return 'Hat';
-      if (BAG_KEYWORDS.test(marker)) return 'Bag';
-      return 'Accessory';
-    default:
-      return formatWardrobeCategory(item.category);
-  }
+  if (slot === 'headwear') return 'Headwear';
+  if (slot === 'tops') return item.category === 'sweater' ? 'Knitwear' : 'Top';
+  if (slot === 'outerwear') return 'Outerwear';
+  if (slot === 'bottoms') return 'Bottom';
+  if (slot === 'full_body') return 'Dress';
+  if (slot === 'socks') return 'Socks';
+  if (slot === 'shoes') return 'Shoes';
+  if (slot === 'bags') return 'Bag';
+  if (slot === 'jewelry') return 'Jewelry';
+  if (role === 'eyewear') return 'Eyewear';
+  return 'Accessory';
 }
 
 export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
@@ -413,6 +425,27 @@ export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
     colors: normalizedColors,
     color: primaryColor,
   });
+  const accessoryRole = resolveWardrobeAccessoryRole({
+    ...draft,
+    subcategory: normalizedSubcategory,
+    shortTitle: titles.shortTitle,
+    fullTitle: titles.fullTitle,
+  });
+  const clothingSlot = resolveWardrobeClothingSlot({
+    ...draft,
+    subcategory: normalizedSubcategory,
+    shortTitle: titles.shortTitle,
+    fullTitle: titles.fullTitle,
+    accessoryRole,
+  });
+  const bodySlot = resolveWardrobeBodySlot({
+    ...draft,
+    subcategory: normalizedSubcategory,
+    shortTitle: titles.shortTitle,
+    fullTitle: titles.fullTitle,
+    accessoryRole,
+    clothingSlot,
+  });
   const backgroundRemoved = Boolean(draft.backgroundRemoved);
   const processedImageUrl = cleanUri(draft.processedImageUrl);
   const originalUrl = cleanUri(draft.originalUrl);
@@ -430,6 +463,8 @@ export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
     fullTitle: titles.fullTitle,
     category: draft.category,
     subcategory: normalizedSubcategory,
+    clothingSlot,
+    accessoryRole,
     imageUrl,
     thumbnailUrl: cleanUri(draft.thumbnailUrl) || imageUrl,
     iconName: draft.iconName || `icon-${draft.category}`,
@@ -449,7 +484,7 @@ export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
     originalUrl,
     cutoutUrl: cleanUri(draft.cutoutUrl),
     maskUrl: cleanUri(draft.maskUrl),
-    bodySlot: resolveWardrobeBodySlot(draft),
+    bodySlot,
     positionOffsetX: clampOffset(draft.positionOffsetX),
     positionOffsetY: clampOffset(draft.positionOffsetY),
     scale: clampScale(draft.scale),
@@ -458,6 +493,9 @@ export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
     rawImageFallback: draft.rawImageFallback ?? (!backgroundRemoved && Boolean(originalUrl) && !processedImageUrl),
     metadata: {
       ...(draft.metadata || {}),
+      clothingSlot,
+      accessoryRole,
+      closetStorageMode: resolveClosetStorageMode(clothingSlot),
       originalName: rawName,
       rawFallbackUrl: cleanUri((draft.metadata?.rawFallbackUrl as string | undefined) || originalUrl),
     },
@@ -465,15 +503,7 @@ export function buildWardrobeItem(draft: WardrobeItemDraft): WardrobeItem {
 }
 
 export function selectBestImageUri(item: WardrobeItem): string {
-  const candidates = [
-    item.processedImageUrl,
-    item.thumbnailUrl,
-    item.imageUrl,
-    item.cutoutUrl,
-    item.originalUrl,
-    String(item.metadata?.rawFallbackUrl || ''),
-  ];
-  return candidates.map(cleanUri).find(Boolean) || '';
+  return resolvePreferredWardrobeVisualAsset(item).url;
 }
 
 export function selectOriginalWardrobeImageUri(item: WardrobeItem): string {
@@ -528,6 +558,60 @@ export function getLayer(item: WardrobeItem): number {
   return CATEGORY_Z_INDEX[item.category];
 }
 
+export function resolvePreferredWardrobeVisualAsset(item: Pick<WardrobeItem, 'backgroundRemoved' | 'processedImageUrl' | 'thumbnailUrl' | 'imageUrl' | 'cutoutUrl' | 'originalUrl' | 'metadata'>): {
+  url: string;
+  source: 'processed_transparent' | 'cleaned_thumbnail' | 'raw_fallback' | 'none';
+  fallbackUsed: boolean;
+  backgroundRemoved: boolean;
+} {
+  const backgroundRemoved = Boolean(item.backgroundRemoved || item.metadata?.backgroundRemoved);
+  const processedTransparent = cleanUri(item.processedImageUrl) || cleanUri(String(item.metadata?.processedImageUrl || ''));
+  if (processedTransparent) {
+    return {
+      url: processedTransparent,
+      source: 'processed_transparent',
+      fallbackUsed: false,
+      backgroundRemoved,
+    };
+  }
+
+  const cleanedThumbnail = cleanUri(String(item.metadata?.processedThumbnailUrl || ''))
+    || (backgroundRemoved ? cleanUri(item.thumbnailUrl) : '');
+  if (cleanedThumbnail) {
+    return {
+      url: cleanedThumbnail,
+      source: 'cleaned_thumbnail',
+      fallbackUsed: false,
+      backgroundRemoved,
+    };
+  }
+
+  const rawFallback = [
+    String(item.metadata?.rawFallbackUrl || ''),
+    item.originalUrl,
+    item.imageUrl,
+    item.thumbnailUrl,
+    item.cutoutUrl,
+  ]
+    .map(cleanUri)
+    .find(Boolean) || '';
+  if (rawFallback && !backgroundRemoved) {
+    return {
+      url: rawFallback,
+      source: 'raw_fallback',
+      fallbackUsed: true,
+      backgroundRemoved,
+    };
+  }
+
+  return {
+    url: '',
+    source: 'none',
+    fallbackUsed: false,
+    backgroundRemoved,
+  };
+}
+
 /**
  * Returns the canonical zone for a wardrobe item.
  * @param {Pick<WardrobeItem, 'category' | 'subcategory' | 'name' | 'title' | 'bodySlot'>} item
@@ -546,74 +630,86 @@ export function resolveWardrobeZone(item: Pick<WardrobeItem, 'category' | 'subca
  */
 export function normalizeWardrobeSelection(wardrobeItems: WardrobeItem[], selectedIds: string[]): string[] {
   const itemsById = new Map(wardrobeItems.map(item => [item.id, item]));
-  const zoneSelection: Partial<Record<BodySlot, string>> = {};
-  const accessorySelection: string[] = [];
+  const slotSelection: Partial<Record<ClothingSlot, string>> = {};
 
   for (const id of selectedIds) {
     const item = itemsById.get(id);
     if (!item) continue;
 
-    const zone = resolveWardrobeZone(item);
-    if (zone === 'accessory') {
-      if (!accessorySelection.includes(id)) accessorySelection.push(id);
+    const slot = resolveWardrobeClothingSlot(item);
+    if (slot === 'full_body') {
+      slotSelection.tops = undefined;
+      slotSelection.bottoms = undefined;
+      slotSelection.full_body = id;
       continue;
     }
 
-    if (zone === 'legs') {
-      const torsoId = zoneSelection.torso;
-      const torsoItem = torsoId ? itemsById.get(torsoId) : null;
-      if (torsoItem?.category === 'dress') {
-        zoneSelection.torso = undefined;
-      }
+    if (slot === 'tops' || slot === 'bottoms') {
+      slotSelection.full_body = undefined;
     }
 
-    if (zone === 'torso' && item.category === 'dress') {
-      zoneSelection.legs = undefined;
-    }
-
-    zoneSelection[zone] = id;
+    slotSelection[slot] = id;
   }
 
   return [
-    ...(zoneSelection.head ? [zoneSelection.head] : []),
-    ...(zoneSelection.torso ? [zoneSelection.torso] : []),
-    ...(zoneSelection.legs ? [zoneSelection.legs] : []),
-    ...(zoneSelection.socks ? [zoneSelection.socks] : []),
-    ...(zoneSelection.feet ? [zoneSelection.feet] : []),
-    ...accessorySelection,
+    ...(slotSelection.headwear ? [slotSelection.headwear] : []),
+    ...(slotSelection.full_body ? [slotSelection.full_body] : []),
+    ...(slotSelection.tops ? [slotSelection.tops] : []),
+    ...(slotSelection.outerwear ? [slotSelection.outerwear] : []),
+    ...(slotSelection.bottoms ? [slotSelection.bottoms] : []),
+    ...(slotSelection.socks ? [slotSelection.socks] : []),
+    ...(slotSelection.shoes ? [slotSelection.shoes] : []),
+    ...(slotSelection.bags ? [slotSelection.bags] : []),
+    ...(slotSelection.jewelry ? [slotSelection.jewelry] : []),
+    ...(slotSelection.accessories ? [slotSelection.accessories] : []),
   ];
 }
 
 export function resolveWardrobePlacement(
-  item: Pick<WardrobeItem, 'category' | 'subcategory' | 'name' | 'title' | 'fullTitle' | 'bodySlot' | 'position' | 'positionOffsetX' | 'positionOffsetY' | 'scale'>,
+  item: Pick<WardrobeItem, 'category' | 'subcategory' | 'name' | 'title' | 'shortTitle' | 'fullTitle' | 'bodySlot' | 'clothingSlot' | 'accessoryRole' | 'position' | 'positionOffsetX' | 'positionOffsetY' | 'scale'>,
   slotIndex = 0,
 ): { x: number; y: number; width: number; height: number; bodySlot: BodySlot } {
+  const clothingSlot = resolveWardrobeClothingSlot(item);
+  const accessoryRole = resolveWardrobeAccessoryRole(item);
   const bodySlot = resolveWardrobeBodySlot({
     category: item.category,
     subcategory: item.subcategory,
+    shortTitle: item.shortTitle,
     name: item.fullTitle || item.name,
     title: item.title,
     bodySlot: item.bodySlot,
+    clothingSlot,
+    accessoryRole,
   });
   const offsetX = clampOffset(item.positionOffsetX);
   const offsetY = clampOffset(item.positionOffsetY);
   const scale = clampScale(item.scale);
-  const marker = readWardrobeMarker(item);
+  const marker = readClothingMarker({
+    category: item.category,
+    subcategory: item.subcategory,
+    shortTitle: item.shortTitle,
+    fullTitle: item.fullTitle,
+    title: item.title,
+    name: item.name,
+    clothingSlot,
+    accessoryRole,
+    bodySlot,
+  });
 
   let base = item.position || DEFAULT_GARMENT_POSITIONS[item.category] || BODY_SLOT_ANCHORS[bodySlot];
 
   if (bodySlot === 'head') {
-    if (HAT_KEYWORDS.test(marker)) {
+    if (clothingSlot === 'headwear' || accessoryRole === 'headwear' || HAT_KEYWORDS.test(marker)) {
       base = { x: 34, y: 2, width: 31, height: 10.5 };
-    } else if (FACE_ACCESSORY_KEYWORDS.test(marker)) {
+    } else if (accessoryRole === 'eyewear' || FACE_ACCESSORY_KEYWORDS.test(marker)) {
       base = { x: 34, y: 9.5, width: 30, height: 7.8 };
     } else {
       base = { ...BODY_SLOT_ANCHORS.head, width: 30, height: 12 };
     }
   } else if (bodySlot === 'torso') {
-    if (item.category === 'base') {
+    if (clothingSlot === 'tops' && item.category === 'base') {
       base = { x: 20.5, y: 22, width: 53, height: 26 };
-    } else if (item.category === 'shirt') {
+    } else if (clothingSlot === 'tops' && item.category === 'shirt') {
       if (/\b(cropped|crop|tank|cami|ruched|fitted)\b/i.test(marker)) {
         base = { x: 21.5, y: 22, width: 51, height: 24.5 };
       } else if (/\b(oversized|boxy|button|blouse|camp collar)\b/i.test(marker)) {
@@ -621,17 +717,17 @@ export function resolveWardrobePlacement(
       } else {
         base = DEFAULT_GARMENT_POSITIONS.shirt;
       }
-    } else if (item.category === 'sweater') {
+    } else if (clothingSlot === 'tops' && item.category === 'sweater') {
       if (/\b(cropped|crop)\b/i.test(marker)) {
         base = { x: 18.5, y: 20.5, width: 57, height: 29 };
       } else {
         base = DEFAULT_GARMENT_POSITIONS.sweater;
       }
-    } else if (item.category === 'outerwear') {
+    } else if (clothingSlot === 'outerwear') {
       base = /\b(cropped|crop)\b/i.test(marker)
         ? { x: 16.5, y: 19.5, width: 60, height: 32 }
         : DEFAULT_GARMENT_POSITIONS.outerwear;
-    } else if (item.category === 'dress' || DRESS_KEYWORDS.test(marker)) {
+    } else if (clothingSlot === 'full_body' || item.category === 'dress' || DRESS_KEYWORDS.test(marker)) {
       base = DEFAULT_GARMENT_POSITIONS.dress;
     }
   } else if (bodySlot === 'legs') {
@@ -657,19 +753,19 @@ export function resolveWardrobePlacement(
       base = { x: 28, y: 79, width: 36, height: 13.5 };
     }
   } else if (bodySlot === 'accessory') {
-    if (/\b(headphones?|headset|earbuds?|airpods?)\b/i.test(marker)) {
+    if (accessoryRole === 'audio' || /\b(headphones?|headset|earbuds?|airpods?)\b/i.test(marker)) {
       base = { x: 33, y: 9.5, width: 32, height: 18 };
-    } else if (/\b(earrings?|ear cuff|stud earrings?)\b/i.test(marker)) {
+    } else if (accessoryRole === 'jewelry' && /\b(earrings?|ear cuff|stud earrings?)\b/i.test(marker)) {
       base = slotIndex % 2 === 0
         ? { x: 33, y: 11.5, width: 8.5, height: 12.5 }
         : { x: 58.5, y: 11.5, width: 8.5, height: 12.5 };
-    } else if (SCARF_KEYWORDS.test(marker)) {
+    } else if (accessoryRole === 'neckwear' || SCARF_KEYWORDS.test(marker)) {
       base = { x: 35, y: 23, width: 28, height: 13 };
-    } else if (BAG_KEYWORDS.test(marker)) {
+    } else if (clothingSlot === 'bags' || accessoryRole === 'bag' || BAG_KEYWORDS.test(marker)) {
       base = { x: 60, y: 35, width: 24, height: 20 };
-    } else if (BELT_KEYWORDS.test(marker)) {
+    } else if (accessoryRole === 'belt' || BELT_KEYWORDS.test(marker)) {
       base = { x: 34, y: 54, width: 32, height: 8 };
-    } else if (WRIST_KEYWORDS.test(marker)) {
+    } else if (accessoryRole === 'wristwear' || WRIST_KEYWORDS.test(marker)) {
       base = slotIndex % 2 === 0
         ? { x: 14, y: 38, width: 15, height: 12 }
         : { x: 71, y: 38, width: 15, height: 12 };
@@ -850,13 +946,21 @@ function cleanUri(value: string | undefined): string {
   return typeof value === 'string' ? value.trim() : '';
 }
 
-function readWardrobeMarker(input: {
-  subcategory?: string;
-  name?: string;
-  title?: string;
-  fullTitle?: string;
-}): string {
-  return `${cleanText(input.subcategory)} ${cleanText(input.fullTitle)} ${cleanText(input.title)} ${cleanText(input.name)}`.toLowerCase();
+function resolveClosetStorageMode(clothingSlot: ClothingSlot): string {
+  switch (clothingSlot) {
+    case 'headwear':
+      return 'headwear-rail';
+    case 'bags':
+    case 'jewelry':
+    case 'accessories':
+      return 'accessory-hooks';
+    case 'socks':
+      return 'drawer';
+    case 'shoes':
+      return 'shoe-shelf';
+    default:
+      return 'hanger';
+  }
 }
 
 function containsUsefulDescriptor(value: string, category: GarmentCategory): boolean {

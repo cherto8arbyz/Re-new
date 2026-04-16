@@ -14,6 +14,7 @@ interface HangingSectionProps {
   selectedItemId: string | null;
   theme: ThemeTokens;
   onSelect: (id: string) => void;
+  onRemove?: (id: string) => void;
 }
 
 export const HangingSection = memo(function HangingSection({
@@ -22,6 +23,7 @@ export const HangingSection = memo(function HangingSection({
   selectedItemId,
   theme,
   onSelect,
+  onRemove,
 }: HangingSectionProps) {
   const compact = section.storageMode === 'headwear-rail';
   const spacious = section.key === 'outerwear';
@@ -64,6 +66,7 @@ export const HangingSection = memo(function HangingSection({
                   labelLines={compact ? 1 : 2}
                   hangingOffset={0}
                   onPress={onSelect}
+                  onRemove={onRemove}
                 />
               </View>
             ))}

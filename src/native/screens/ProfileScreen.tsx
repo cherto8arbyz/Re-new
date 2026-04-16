@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Modal,
   Pressable,
@@ -9,7 +10,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import { useNavigation } from '@react-navigation/native';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
@@ -17,6 +18,8 @@ import { OutfitPreviewCanvas } from '../components/OutfitPreviewCanvas';
 import { useAppContext } from '../context/AppContext';
 import type { RootStackParamList } from '../navigation/types';
 import { pickImageAssetAsync } from '../services/image-picker';
+import { generateLookFaceAssetAsync } from '../services/look-face';
+import { resolveAvatarPreviewUrl } from '../../shared/look-preview';
 import {
   PROFILE_BIO_MAX_LENGTH,
   PROFILE_BIO_MAX_LINES,
@@ -42,7 +45,9 @@ export function ProfileScreen() {
   const profileName = String(profile?.name || '').trim() || 'User';
   const profileBio = typeof profile?.bio === 'string' ? profile.bio : '';
   const profileStyle = formatProfileStyle(profile?.style);
+  const avatarGender = profile?.avatarGender || 'female';
   const identityReferenceCount = profile?.identityReferenceUrls?.length || 0;
+  const generatedAvatarUrl = resolveAvatarPreviewUrl(profile);
   const savedLooks = state.savedLooks.filter(entry => entry && entry.outfit);
 
   const [settingsMenuVisible, setSettingsMenuVisible] = useState(false);
@@ -50,6 +55,8 @@ export function ProfileScreen() {
   const [stylizationVisible, setStylizationVisible] = useState(false);
   const [paletteVisible, setPaletteVisible] = useState(false);
   const [hexDraft, setHexDraft] = useState(state.customAccentColor || theme.colors.accent);
+  const [avatarUpdating, setAvatarUpdating] = useState(false);
+  const [avatarStatusText, setAvatarStatusText] = useState('');
 
   const accentPreview = state.accentPalette === 'custom' && state.customAccentColor
     ? state.customAccentColor
@@ -63,7 +70,26 @@ export function ProfileScreen() {
   const handleChangeAvatar = async () => {
     const asset = await pickImageAssetAsync('library');
     if (!asset) return;
-    dispatch({ type: 'SET_PROFILE_AVATAR', payload: asset.uri });
+
+    setAvatarUpdating(true);
+    setAvatarStatusText('');
+    const previousGeneratedAvatarUrl = resolveAvatarPreviewUrl(profile);
+    const lookFace = await generateLookFaceAssetAsync(asset);
+    dispatch({
+      type: 'SET_PROFILE_AVATAR_ASSETS',
+      payload: {
+        avatarUrl: asset.uri,
+        ...(lookFace.success ? { lookFaceAssetUrl: lookFace.imageDataUrl } : {}),
+      },
+    });
+    setAvatarStatusText(
+      lookFace.success
+        ? 'Avatar base updated for Looks.'
+        : previousGeneratedAvatarUrl
+          ? 'Profile photo changed. Previous avatar base was kept.'
+          : 'Profile photo changed. Avatar base is still missing.',
+    );
+    setAvatarUpdating(false);
   };
 
   const applyCustomAccent = (value: string | null) => {
@@ -101,11 +127,21 @@ export function ProfileScreen() {
               <Text numberOfLines={1} style={styles.name}>
                 {profileName}
               </Text>
-              <Text style={styles.meta}>{profileStyle}</Text>
+              <Text style={styles.meta}>{`${profileStyle} / ${formatAvatarGender(avatarGender)}`}</Text>
+              <Text style={styles.metaSecondary}>{generatedAvatarUrl ? 'Avatar base ready' : 'Avatar base missing'}</Text>
+              <Text style={styles.metaSecondary}>{`Identity ${identityReferenceCount}/5`}</Text>
 
-              <Pressable onPress={() => void handleChangeAvatar()} style={styles.avatarAction}>
-                <Ionicons name="image-outline" size={12} color={theme.colors.accent} />
-                <Text style={styles.avatarActionText}>Change</Text>
+              <Pressable
+                onPress={() => void handleChangeAvatar()}
+                style={[styles.avatarAction, avatarUpdating && styles.avatarActionDisabled]}
+                disabled={avatarUpdating}
+              >
+                {avatarUpdating ? (
+                  <ActivityIndicator size="small" color={theme.colors.accent} />
+                ) : (
+                  <Ionicons name="image-outline" size={12} color={theme.colors.accent} />
+                )}
+                <Text style={styles.avatarActionText}>{avatarUpdating ? 'Updating' : 'Change'}</Text>
               </Pressable>
             </View>
 
@@ -125,13 +161,19 @@ export function ProfileScreen() {
         </View>
 
         <View style={styles.actionStack}>
+          {avatarStatusText ? (
+            <View style={styles.statusPill}>
+              <Text style={styles.statusPillText}>{avatarStatusText}</Text>
+            </View>
+          ) : null}
+
           <Pressable
             onPress={() => navigation.navigate('IdentityCapture')}
             style={styles.primaryActionButton}
           >
             <Ionicons name="sparkles-outline" size={18} color={theme.colors.accentContrast} />
             <Text style={styles.primaryActionText}>
-              {identityReferenceCount >= 5 ? `Generate Avatar (${identityReferenceCount})` : 'Generate Avatar'}
+              {identityReferenceCount >= 5 ? 'Identity Ready (5/5)' : `Capture Identity (${identityReferenceCount}/5)`}
             </Text>
           </Pressable>
 
@@ -171,6 +213,29 @@ export function ProfileScreen() {
               <Pressable onPress={() => setSettingsMenuVisible(false)} style={styles.closeButton}>
                 <Ionicons name="close" size={18} color={theme.colors.text} />
               </Pressable>
+            </View>
+
+            <View style={styles.settingsBlock}>
+              <Text style={styles.groupLabel}>Avatar gender</Text>
+              <Text style={styles.groupHint}>Affects avatar generation and daily look rendering.</Text>
+              <View style={styles.themeToggle}>
+                <Pressable
+                  onPress={() => dispatch({ type: 'SET_PROFILE_AVATAR_GENDER', payload: 'female' })}
+                  style={[styles.themeChip, avatarGender === 'female' && styles.themeChipActive]}
+                >
+                  <Text style={[styles.themeChipText, avatarGender === 'female' && styles.themeChipTextActive]}>
+                    Female
+                  </Text>
+                </Pressable>
+                <Pressable
+                  onPress={() => dispatch({ type: 'SET_PROFILE_AVATAR_GENDER', payload: 'male' })}
+                  style={[styles.themeChip, avatarGender === 'male' && styles.themeChipActive]}
+                >
+                  <Text style={[styles.themeChipText, avatarGender === 'male' && styles.themeChipTextActive]}>
+                    Male
+                  </Text>
+                </Pressable>
+              </View>
             </View>
 
             <View style={styles.menuList}>
@@ -252,7 +317,7 @@ export function ProfileScreen() {
                     <View key={entry.id} style={styles.savedCard}>
                       <OutfitPreviewCanvas
                         outfit={entry.outfit}
-                        avatarUrl={profile.lookFaceAssetUrl || profile.avatarUrl || ''}
+                        avatarUrl={resolveAvatarPreviewUrl(profile)}
                         theme={theme}
                         size="compact"
                       />
@@ -490,6 +555,10 @@ function formatProfileStyle(value: string | undefined): string {
   return safe.charAt(0).toUpperCase() + safe.slice(1);
 }
 
+function formatAvatarGender(value: string | undefined): string {
+  return String(value || '').trim().toLowerCase() === 'male' ? 'Male' : 'Female';
+}
+
 function createStyles(theme: ThemeTokens) {
   return StyleSheet.create({
     container: {
@@ -542,6 +611,14 @@ function createStyles(theme: ThemeTokens) {
       textTransform: 'capitalize',
       textAlign: 'left',
     },
+    metaSecondary: {
+      color: theme.colors.muted,
+      fontSize: 11,
+      fontWeight: '800',
+      textAlign: 'left',
+      textTransform: 'uppercase',
+      letterSpacing: 0.4,
+    },
     avatarAction: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -552,6 +629,9 @@ function createStyles(theme: ThemeTokens) {
       borderColor: theme.colors.accentMuted,
       paddingHorizontal: 8,
       paddingVertical: 5,
+    },
+    avatarActionDisabled: {
+      opacity: 0.7,
     },
     avatarActionText: {
       color: theme.colors.accent,
@@ -590,6 +670,20 @@ function createStyles(theme: ThemeTokens) {
     },
     actionStack: {
       gap: 10,
+    },
+    statusPill: {
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 14,
+      paddingVertical: 10,
+    },
+    statusPillText: {
+      color: theme.colors.textSecondary,
+      fontSize: 12,
+      lineHeight: 17,
+      fontWeight: '700',
     },
     primaryActionButton: {
       minHeight: 54,
@@ -830,6 +924,11 @@ function createStyles(theme: ThemeTokens) {
       fontWeight: '700',
       textTransform: 'uppercase',
       letterSpacing: 0.5,
+    },
+    groupHint: {
+      color: theme.colors.muted,
+      fontSize: 12,
+      lineHeight: 17,
     },
     themeToggle: {
       flexDirection: 'column',

@@ -28,7 +28,7 @@ class PromptBuilderService:
       garment_summaries=garment_summaries,
       has_core_garments=has_core_garments,
     )
-    if not self.gemini_proxy_service.configured:
+    if not has_core_garments or not self.gemini_proxy_service.configured:
       return fallback_prompt
 
     instruction = (
@@ -37,7 +37,7 @@ class PromptBuilderService:
       "Use the weather context to choose scene, pose, lighting, and mood. "
       "If core garments will be applied later through virtual try-on, keep the clothing neutral base layers "
       "and mention only non-VTON items like shoes, hat, bag, or accessories. "
-      "If no garments were selected, describe a stylish weather-appropriate full outfit directly in the prompt."
+      "Never invent missing tops, bottoms, dresses, or outerwear."
     )
     body = {
       "contents": [
@@ -75,21 +75,25 @@ class PromptBuilderService:
     garment_summaries: list[dict[str, str]],
     has_core_garments: bool,
   ) -> str:
-    scene = self._build_scene(weather_context)
+    scene = self._build_scene(weather_context, has_core_garments=has_core_garments)
     accessories = self._build_accessories_phrase(garment_summaries)
+    normalized_gender = self._normalize_gender(gender)
 
     if has_core_garments:
       clothing = "wearing neutral fitted base layers prepared for virtual try-on"
     else:
-      clothing = self._build_styled_outfit(weather_context)
+      clothing = self._build_placeholder_outfit(normalized_gender)
 
     accessories_suffix = f", {accessories}" if accessories else ""
     return (
-      f"professional fashion photography, {gender.lower()} model, full body shot, confident natural pose, "
+      f"professional fashion photography, {normalized_gender} model, full body shot, confident natural pose, "
       f"{clothing}{accessories_suffix}, {scene}, realistic lighting, sharp focus, editorial style"
     )
 
-  def _build_scene(self, weather_context: dict[str, Any]) -> str:
+  def _build_scene(self, weather_context: dict[str, Any], has_core_garments: bool) -> str:
+    if not has_core_garments:
+      return "clean neutral studio backdrop, soft editorial lighting"
+
     summary = str(
       weather_context.get("summary")
       or weather_context.get("condition")
@@ -110,15 +114,10 @@ class PromptBuilderService:
       return "cold city avenue, crisp air, soft grey sky"
     return "modern urban street, balanced natural light"
 
-  def _build_styled_outfit(self, weather_context: dict[str, Any]) -> str:
-    temperature = self._extract_temperature(weather_context)
-    if temperature <= 5:
-      return "wearing a stylish cold-weather outfit with a tailored coat and scarf"
-    if temperature <= 15:
-      return "wearing a layered smart-casual outfit suitable for cool weather"
-    if temperature >= 26:
-      return "wearing a breathable polished summer outfit"
-    return "wearing a stylish smart-casual outfit suitable for the weather"
+  def _build_placeholder_outfit(self, gender: str) -> str:
+    if gender == "male":
+      return "wearing clean white shorts and a fitted white tank top"
+    return "wearing clean white shorts and a fitted white tank top"
 
   def _build_accessories_phrase(self, garment_summaries: list[dict[str, str]]) -> str:
     accessory_labels: list[str] = []
@@ -151,6 +150,9 @@ class PromptBuilderService:
       return float(raw_value)
     except (TypeError, ValueError):
       return 18.0
+
+  def _normalize_gender(self, value: str | None) -> str:
+    return "male" if str(value or "").strip().lower() == "male" else "female"
 
   def _extract_text(self, payload: dict[str, Any]) -> str:
     candidates = payload.get("candidates")

@@ -2,6 +2,7 @@ import { createOutfit } from '../../shared/outfits';
 import {
   getWardrobeItemColor,
   getWardrobeItemFullTitle,
+  selectBestImageUri,
 } from '../../shared/wardrobe';
 import type { Outfit, WardrobeItem, WeatherModel } from '../../types/models';
 import type {
@@ -13,14 +14,14 @@ import type { WardrobeStorageMode } from '../components/wardrobe/types';
 
 export function buildDailyLookAvailableGarments(items: WardrobeItem[]): DailyLookAvailableGarmentInput[] {
   return items.reduce<DailyLookAvailableGarmentInput[]>((accumulator, item) => {
-    const remoteImageUrl = selectRemoteGarmentImageUrl(item);
-    if (!remoteImageUrl) {
+    const imageReference = selectDailyLookImageReference(item);
+    if (!imageReference) {
       return accumulator;
     }
 
     accumulator.push({
       garment_id: item.id,
-      image_url: remoteImageUrl,
+      image_url: imageReference,
       category: item.category,
       color: item.colors.length ? item.colors : item.color,
       style_tags: item.styleTags,
@@ -115,16 +116,17 @@ export function formatDailyLookLoaderLabel(status: DailyLookJobStatus): string {
   }
 }
 
-export function selectRemoteGarmentImageUrl(item: WardrobeItem): string {
+export function selectDailyLookImageReference(item: WardrobeItem): string {
   const candidates = [
     item.processedImageUrl,
     item.thumbnailUrl,
     item.imageUrl,
     item.originalUrl,
     item.cutoutUrl,
+    selectBestImageUri(item),
   ];
 
-  return candidates.find(isRemoteHttpUrl) || '';
+  return candidates.find(candidate => String(candidate || '').trim().length > 0) || '';
 }
 
 export function getDailyLookGarmentCaption(item: WardrobeItem): string {
@@ -143,9 +145,4 @@ function inferWeatherSeason(temperature?: number): string {
   if (safeTemperature <= 14) return 'autumn';
   if (safeTemperature >= 24) return 'summer';
   return 'spring';
-}
-
-function isRemoteHttpUrl(value: string | undefined): boolean {
-  const normalized = String(value || '').trim().toLowerCase();
-  return normalized.startsWith('http://') || normalized.startsWith('https://');
 }

@@ -1,5 +1,7 @@
 import {
+  AVATAR_GENDERS,
   STYLE_PREFERENCES,
+  type AvatarGender,
   type AuthSession,
   type FaceAsset,
   type StylePreference,
@@ -11,6 +13,7 @@ export interface OnboardingSubmission {
   name: string;
   style: StylePreference;
   avatarUrl: string;
+  avatarGender?: AvatarGender;
   city?: string;
   faceAsset?: FaceAsset | null;
   lookFaceAssetUrl?: string;
@@ -71,15 +74,17 @@ export function resolveAuthAccessToken(
 }
 
 export function buildUserProfile(session: AuthSession, input: OnboardingSubmission): UserProfile {
+  const lookFaceAssetUrl = String(input.lookFaceAssetUrl || '').trim();
   return {
     id: session.user.id,
     name: input.name.trim(),
     style: normalizeStylePreference(input.style),
+    avatarGender: normalizeAvatarGender(input.avatarGender),
     bio: '',
     avatarUrl: input.avatarUrl,
     profileAvatarUrl: input.avatarUrl,
-    lookFaceAssetUrl: input.lookFaceAssetUrl || input.avatarUrl,
-    faceReferenceUrl: input.lookFaceAssetUrl || input.avatarUrl,
+    lookFaceAssetUrl,
+    faceReferenceUrl: lookFaceAssetUrl,
     identityReferenceUrls: [],
     faceAsset: input.faceAsset || null,
     onboardingComplete: true,
@@ -98,6 +103,10 @@ export function isOnboardingComplete(profile: UserProfile | null): boolean {
 export function normalizeStylePreference(value: string): StylePreference {
   const fallback: StylePreference = 'casual';
   return STYLE_PREFERENCES.includes(value as StylePreference) ? (value as StylePreference) : fallback;
+}
+
+export function normalizeAvatarGender(value: string | null | undefined): AvatarGender {
+  return AVATAR_GENDERS.includes(value as AvatarGender) ? (value as AvatarGender) : 'female';
 }
 
 function createDevelopmentAccessToken(userId: string): string {

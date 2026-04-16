@@ -5,7 +5,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 
 import type { WeatherModel } from '../../types/models';
 import { type ThemeTokens } from '../theme';
@@ -49,7 +49,7 @@ export function DayWeatherCarousel({
       <View style={styles.summary}>
         <View style={styles.metaRow}>
           <Text numberOfLines={1} style={styles.dateLabel}>
-            {summary.relativeLabel} · {summary.dayLabel}
+            {`${summary.relativeLabel} · ${summary.dayLabel}`}
           </Text>
           <View style={styles.locationWrap}>
             <Ionicons name={summary.icon} size={14} color={theme.colors.accent} />
@@ -60,9 +60,9 @@ export function DayWeatherCarousel({
         </View>
 
         <View style={styles.detailsRow}>
-          <Text style={styles.temperature}>{summary.temp}°</Text>
+          <Text style={styles.temperature}>{`${summary.temp}°`}</Text>
           <Text numberOfLines={1} style={styles.condition}>{summary.label}</Text>
-          <Text numberOfLines={1} style={styles.feelsLike}>Feels like {summary.feelsLike}°</Text>
+          <Text numberOfLines={1} style={styles.feelsLike}>{`Feels like ${summary.feelsLike}°`}</Text>
         </View>
       </View>
 

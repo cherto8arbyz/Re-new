@@ -20,6 +20,7 @@ interface WardrobeSectionSceneProps {
   theme: ThemeTokens;
   minHeight?: number;
   onSelect: (id: string) => void;
+  onRemove?: (id: string) => void;
 }
 
 export const WardrobeSectionScene = memo(function WardrobeSectionScene({
@@ -29,6 +30,7 @@ export const WardrobeSectionScene = memo(function WardrobeSectionScene({
   theme,
   minHeight,
   onSelect,
+  onRemove,
 }: WardrobeSectionSceneProps) {
   const allItems = useMemo(() => rows.flat(), [rows]);
   const scene = useMemo(
@@ -78,6 +80,7 @@ export const WardrobeSectionScene = memo(function WardrobeSectionScene({
               selectedItemId={scene.selectedItemId}
               theme={theme}
               onSelect={onSelect}
+              onRemove={onRemove}
             />
           ) : (
             <ShelfSection
@@ -86,6 +89,7 @@ export const WardrobeSectionScene = memo(function WardrobeSectionScene({
               selectedItemId={scene.selectedItemId}
               theme={theme}
               onSelect={onSelect}
+              onRemove={onRemove}
             />
           )}
         </View>

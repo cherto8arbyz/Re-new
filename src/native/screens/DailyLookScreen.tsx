@@ -11,7 +11,7 @@ import {
   ToastAndroid,
   View,
 } from 'react-native';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { resolveAuthAccessToken } from '../../shared/onboarding';
@@ -34,6 +34,7 @@ interface FailureUiContent {
   title: string;
   message: string;
   retryLabel: string;
+  action: 'refresh' | 'regenerate';
 }
 
 function showSavedLookToast(): void {
@@ -66,11 +67,13 @@ export function DailyLookScreen({ navigation }: Props) {
     errorMessage,
     isLoading,
     generateAnotherVariant,
+    refreshCurrentJob,
   } = useDailyLookPolling({
     enabled: true,
     accessToken,
     availableGarments,
     weatherContext,
+    gender: state.user?.avatarGender || 'female',
   });
 
   const usedItems = useMemo(
@@ -82,6 +85,13 @@ export function DailyLookScreen({ navigation }: Props) {
     () => resolveFailureUi(errorMessage),
     [errorMessage],
   );
+  const handleFailureAction = useCallback(() => {
+    if (failureUi.action === 'refresh') {
+      void refreshCurrentJob();
+      return;
+    }
+    void generateAnotherVariant();
+  }, [failureUi.action, generateAnotherVariant, refreshCurrentJob]);
 
   useEffect(() => {
     Animated.timing(resultReveal, {
@@ -148,7 +158,7 @@ export function DailyLookScreen({ navigation }: Props) {
             <Pressable onPress={() => navigation.goBack()} style={[styles.actionButton, styles.secondaryButton]}>
               <Text style={styles.secondaryButtonText}>Back</Text>
             </Pressable>
-            <Pressable onPress={() => void generateAnotherVariant()} style={[styles.actionButton, styles.primaryButton]}>
+            <Pressable onPress={handleFailureAction} style={[styles.actionButton, styles.primaryButton]}>
               <Text style={styles.primaryButtonText}>{failureUi.retryLabel}</Text>
             </Pressable>
           </View>
@@ -172,7 +182,7 @@ export function DailyLookScreen({ navigation }: Props) {
               <Text style={styles.resultText}>
                 {usedItems.length
                   ? 'These are the real wardrobe pieces the stylist used in the final image.'
-                  : 'This variant was styled from weather context because no synced garments were selected.'}
+                  : 'No wardrobe clothes are synced yet, so the avatar is shown in a simple white tank top and shorts until you add garments.'}
               </Text>
 
               {usedItems.length ? (
@@ -201,11 +211,25 @@ function resolveFailureUi(errorMessage: string | null): FailureUiContent {
   const message = String(errorMessage || '').trim();
   const normalized = message.toLowerCase();
 
-  if (normalized.includes('timed out after') || normalized.includes('request ') || normalized.includes('fal')) {
+  if (
+    normalized.includes('check current job')
+    || normalized.includes('lost its request handle')
+    || normalized.includes('resume without a new attempt')
+  ) {
     return {
-      title: 'Provider queue timed out.',
-      message: message || 'The generation stayed in the provider queue too long. Starting again will create a new paid attempt.',
-      retryLabel: 'Start new paid attempt',
+      title: 'Generation is being resumed.',
+      message: message || 'The paid request was already submitted. Check the current job instead of starting a new attempt.',
+      retryLabel: 'Check current job',
+      action: 'refresh',
+    };
+  }
+
+  if (normalized.includes('could not be synced') || normalized.includes('no paid ai request was sent')) {
+    return {
+      title: 'Wardrobe sync failed.',
+      message: message || 'The garment upload never reached the image pipeline, so no paid AI attempt was used.',
+      retryLabel: 'Retry sync',
+      action: 'regenerate',
     };
   }
 
@@ -213,16 +237,8 @@ function resolveFailureUi(errorMessage: string | null): FailureUiContent {
     title: 'AI stylist needs more data.',
     message: message || 'Please try again after syncing more wardrobe photos.',
     retryLabel: 'Generate another variant',
+    action: 'regenerate',
   };
-}
-
-/* eslint-disable-next-line no-unused-vars, @typescript-eslint/no-unused-vars */
-function _showSavedToastLegacy(): void {
-  if (Platform.OS === 'android') {
-    ToastAndroid.show('Образ сохранен в гардероб', ToastAndroid.SHORT);
-  } else {
-    console.info('Образ сохранен в гардероб');
-  }
 }
 
 function createStyles(theme: ThemeTokens) {
@@ -230,6 +246,9 @@ function createStyles(theme: ThemeTokens) {
     safe: {
       flex: 1,
       backgroundColor: theme.colors.background,
+      overflow: 'hidden',
+      width: '100%',
+      minWidth: 0,
       paddingHorizontal: theme.spacing.md,
       paddingTop: theme.spacing.sm,
       paddingBottom: theme.spacing.md,

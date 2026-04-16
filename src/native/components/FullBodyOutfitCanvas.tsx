@@ -7,23 +7,20 @@ import {
   Text,
   View,
 } from 'react-native';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 
-import { resolvePreferredVisualAsset } from '../../models/garment-presentation.js';
-import { getLayer, resolveWardrobeBodySlot, resolveWardrobePlacement } from '../../shared/wardrobe';
+import type { AvatarLookState, LookControlSlot } from '../../shared/look-preview';
+import { getLookPreviewLayer } from '../../shared/look-preview';
+import {
+  resolvePreferredWardrobeVisualAsset,
+  resolveWardrobeClothingSlot,
+  resolveWardrobePlacement,
+} from '../../shared/wardrobe';
 import type { WardrobeItem } from '../../types/models';
 import type { ThemeTokens } from '../theme';
 
-export type BodySlotKey =
-  | 'head'
-  | 'torso'
-  | 'legs'
-  | 'socks'
-  | 'feet'
-  | 'accessory';
-
 export interface CanvasSlotControl {
-  slot: BodySlotKey;
+  slot: LookControlSlot;
   yPercent: number;
   enabled: boolean;
   onPrev: () => void;
@@ -31,9 +28,9 @@ export interface CanvasSlotControl {
 }
 
 interface FullBodyOutfitCanvasProps {
-  activeSlots: Partial<Record<Exclude<BodySlotKey, 'accessory'>, WardrobeItem>>;
-  accessoryItems?: WardrobeItem[];
+  items: WardrobeItem[];
   avatarUrl?: string;
+  avatarState?: AvatarLookState;
   theme: ThemeTokens;
   editable?: boolean;
   completionHints?: string[];
@@ -45,9 +42,9 @@ interface FullBodyOutfitCanvasProps {
 }
 
 export function FullBodyOutfitCanvas({
-  activeSlots,
-  accessoryItems = [],
+  items,
   avatarUrl = '',
+  avatarState = 'missing',
   theme,
   editable = false,
   completionHints = [],
@@ -66,18 +63,22 @@ export function FullBodyOutfitCanvas({
       })}
     >
       <View pointerEvents="none" style={styles.backGlow} />
+      <View pointerEvents="none" style={styles.upperGlow} />
       <View pointerEvents="none" style={styles.floorGlow} />
 
-      <MannequinSilhouette avatarUrl={avatarUrl} theme={theme} />
+      <View style={styles.statusBadge}>
+        <Text style={styles.statusBadgeText}>{resolveAvatarStatusLabel(avatarState)}</Text>
+      </View>
 
-      {canvasSize.width > 0 && renderGarmentLayers({
-        activeSlots,
-        accessoryItems,
+      <MannequinSilhouette avatarUrl={avatarUrl} avatarState={avatarState} theme={theme} />
+
+      {canvasSize.width > 0 ? renderGarmentLayers({
+        items,
         editable,
         stageWidth: canvasSize.width,
         stageHeight: canvasSize.height,
         onPlacementChange,
-      })}
+      }) : null}
 
       {slotControls.map(control => (
         <React.Fragment key={control.slot}>
@@ -122,21 +123,40 @@ export function FullBodyOutfitCanvas({
   );
 }
 
-function MannequinSilhouette({ avatarUrl, theme }: { avatarUrl: string; theme: ThemeTokens }) {
+function MannequinSilhouette({
+  avatarUrl,
+  avatarState,
+  theme,
+}: {
+  avatarUrl: string;
+  avatarState: AvatarLookState;
+  theme: ThemeTokens;
+}) {
   const styles = useMemo(() => createStyles(theme), [theme]);
 
   return (
     <>
+      {avatarUrl ? (
+        <View style={styles.avatarPortraitWrap}>
+          <Image source={{ uri: avatarUrl }} style={styles.avatarPortraitImage} resizeMode="cover" />
+          <View pointerEvents="none" style={styles.avatarPortraitScrim} />
+        </View>
+      ) : null}
+
       <View style={styles.headShell}>
         {avatarUrl ? (
           <Image source={{ uri: avatarUrl }} style={styles.headImage} resizeMode="cover" />
         ) : (
-          <View style={styles.headFill} />
+          <View style={styles.headFill}>
+            <Text style={styles.headFallbackText}>Avatar</Text>
+          </View>
         )}
       </View>
 
+      <View pointerEvents="none" style={styles.faceHalo} />
       <View pointerEvents="none" style={styles.neck} />
       <View pointerEvents="none" style={styles.shoulders} />
+      <View pointerEvents="none" style={styles.torsoCore} />
       <View pointerEvents="none" style={styles.waist} />
       <View pointerEvents="none" style={styles.hips} />
       <View pointerEvents="none" style={[styles.arm, styles.armLeft]} />
@@ -145,6 +165,19 @@ function MannequinSilhouette({ avatarUrl, theme }: { avatarUrl: string; theme: T
       <View pointerEvents="none" style={[styles.leg, styles.legRight]} />
       <View pointerEvents="none" style={[styles.foot, styles.footLeft]} />
       <View pointerEvents="none" style={[styles.foot, styles.footRight]} />
+
+      {avatarState !== 'ready' ? (
+        <View pointerEvents="none" style={styles.avatarHintCard}>
+          <Text style={styles.avatarHintTitle}>
+            {avatarState === 'needs_identity' ? 'Avatar base is ready' : 'Avatar missing'}
+          </Text>
+          <Text style={styles.avatarHintText}>
+            {avatarState === 'needs_identity'
+              ? 'Add 5 identity photos to make AI styling lock onto your face more reliably.'
+              : 'Upload a profile photo first so Looks can render around your avatar.'}
+          </Text>
+        </View>
+      ) : null}
     </>
   );
 }
@@ -167,7 +200,7 @@ function GarmentLayer({
     patch: Partial<Pick<WardrobeItem, 'positionOffsetX' | 'positionOffsetY' | 'scale' | 'rotation'>>,
   ) => void;
 }) {
-  const image = resolvePreferredVisualAsset(item).url;
+  const image = resolvePreferredWardrobeVisualAsset(item).url;
   const [offset, setOffset] = useState({
     x: item.positionOffsetX || 0,
     y: item.positionOffsetY || 0,
@@ -233,12 +266,12 @@ function GarmentLayer({
         top: `${placement.y}%`,
         width: `${placement.width}%`,
         height: `${placement.height}%`,
-        zIndex: resolveCanvasLayer(item),
+        zIndex: Math.round(getLookPreviewLayer(item)),
         transform: [{ rotate: `${item.rotation || 0}deg` }],
         shadowColor: '#000000',
-        shadowOpacity: 0.12,
-        shadowRadius: 12,
-        shadowOffset: { width: 0, height: 8 },
+        shadowOpacity: 0.14,
+        shadowRadius: 14,
+        shadowOffset: { width: 0, height: 10 },
       }}
       resizeMode="contain"
       {...(editable ? panResponder.panHandlers : {})}
@@ -247,15 +280,13 @@ function GarmentLayer({
 }
 
 function renderGarmentLayers({
-  activeSlots,
-  accessoryItems,
+  items,
   editable,
   stageWidth,
   stageHeight,
   onPlacementChange,
 }: {
-  activeSlots: Partial<Record<Exclude<BodySlotKey, 'accessory'>, WardrobeItem>>;
-  accessoryItems: WardrobeItem[];
+  items: WardrobeItem[];
   editable: boolean;
   stageWidth: number;
   stageHeight: number;
@@ -264,21 +295,13 @@ function renderGarmentLayers({
     patch: Partial<Pick<WardrobeItem, 'positionOffsetX' | 'positionOffsetY' | 'scale' | 'rotation'>>,
   ) => void;
 }) {
-  const orderedItems: WardrobeItem[] = [
-    ...(activeSlots.head ? [activeSlots.head] : []),
-    ...(activeSlots.torso ? [activeSlots.torso] : []),
-    ...(activeSlots.legs ? [activeSlots.legs] : []),
-    ...(activeSlots.socks ? [activeSlots.socks] : []),
-    ...(activeSlots.feet ? [activeSlots.feet] : []),
-    ...accessoryItems,
-  ]
-    .filter((item, index, list) => list.findIndex(candidate => candidate.id === item.id) === index)
-    .sort((left, right) => resolveCanvasLayer(left) - resolveCanvasLayer(right));
+  const orderedItems = [...items]
+    .filter(Boolean)
+    .sort((left, right) => getLookPreviewLayer(left) - getLookPreviewLayer(right));
 
-  /** @type {Map<string, number>} */
-  const slotCounters = new Map();
+  const slotCounters = new Map<string, number>();
   return orderedItems.map(item => {
-    const slotKey = resolveWardrobeBodySlot(item);
+    const slotKey = `${resolveWardrobeClothingSlot(item)}:${item.accessoryRole || ''}`;
     const slotIndex = slotCounters.get(slotKey) || 0;
     slotCounters.set(slotKey, slotIndex + 1);
     return (
@@ -299,13 +322,15 @@ function clampOffset(value: number) {
   return Math.max(-18, Math.min(18, value));
 }
 
-function resolveCanvasLayer(item: WardrobeItem) {
-  const slot = resolveWardrobeBodySlot(item);
-  const base = 20 + getLayer(item);
-  if (slot === 'socks') return base;
-  if (slot === 'feet') return base + 2;
-  if (slot === 'accessory') return base + 4;
-  return base + 1;
+function resolveAvatarStatusLabel(state: AvatarLookState): string {
+  switch (state) {
+    case 'ready':
+      return 'Avatar ready';
+    case 'needs_identity':
+      return 'Avatar base only';
+    default:
+      return 'Avatar missing';
+  }
 }
 
 function createStyles(theme: ThemeTokens) {
@@ -318,22 +343,52 @@ function createStyles(theme: ThemeTokens) {
     },
     backGlow: {
       position: 'absolute',
-      top: 74,
+      top: 86,
       alignSelf: 'center',
-      width: '60%',
-      height: '60%',
-      borderRadius: 220,
+      width: '64%',
+      height: '58%',
+      borderRadius: 240,
       backgroundColor: theme.colors.accentSoft,
+      opacity: 0.78,
+    },
+    upperGlow: {
+      position: 'absolute',
+      top: -30,
+      right: -30,
+      width: 180,
+      height: 180,
+      borderRadius: 180,
+      backgroundColor: theme.colors.panelStrong,
+      opacity: 0.28,
     },
     floorGlow: {
       position: 'absolute',
-      bottom: 26,
+      bottom: 30,
       alignSelf: 'center',
-      width: '44%',
-      height: 30,
+      width: '46%',
+      height: 34,
       borderRadius: 999,
       backgroundColor: theme.colors.panel,
-      opacity: 0.48,
+      opacity: 0.52,
+    },
+    statusBadge: {
+      position: 'absolute',
+      top: 14,
+      left: 14,
+      zIndex: 90,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.overlay,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 7,
+    },
+    statusBadgeText: {
+      color: theme.colors.text,
+      fontSize: 11,
+      fontWeight: '800',
+      textTransform: 'uppercase',
+      letterSpacing: 0.7,
     },
     headShell: {
       position: 'absolute',
@@ -346,7 +401,7 @@ function createStyles(theme: ThemeTokens) {
       backgroundColor: theme.colors.surfaceElevated,
       borderWidth: 3,
       borderColor: theme.colors.surfaceElevated,
-      zIndex: 16,
+      zIndex: 22,
     },
     headImage: {
       width: '100%',
@@ -354,7 +409,47 @@ function createStyles(theme: ThemeTokens) {
     },
     headFill: {
       flex: 1,
+      alignItems: 'center',
+      justifyContent: 'center',
       backgroundColor: theme.colors.panelStrong,
+    },
+    headFallbackText: {
+      color: theme.colors.textSecondary,
+      fontSize: 11,
+      fontWeight: '800',
+    },
+    faceHalo: {
+      position: 'absolute',
+      top: '4.8%',
+      alignSelf: 'center',
+      width: '23%',
+      aspectRatio: 1,
+      borderRadius: 999,
+      backgroundColor: theme.colors.accentSoft,
+      opacity: 0.38,
+      zIndex: 12,
+    },
+    avatarPortraitWrap: {
+      position: 'absolute',
+      top: '12.5%',
+      alignSelf: 'center',
+      width: '46%',
+      height: '71%',
+      borderRadius: 42,
+      overflow: 'hidden',
+      opacity: 0.32,
+      zIndex: 4,
+      backgroundColor: theme.colors.surfaceElevated,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    avatarPortraitImage: {
+      width: '100%',
+      height: '100%',
+    },
+    avatarPortraitScrim: {
+      ...StyleSheet.absoluteFillObject,
+      backgroundColor: 'rgba(18, 22, 32, 0.34)',
     },
     neck: {
       position: 'absolute',
@@ -378,6 +473,16 @@ function createStyles(theme: ThemeTokens) {
       borderBottomRightRadius: 54,
       backgroundColor: theme.colors.panelStrong,
       opacity: 0.82,
+    },
+    torsoCore: {
+      position: 'absolute',
+      top: '28.5%',
+      alignSelf: 'center',
+      width: '30%',
+      height: '28%',
+      borderRadius: 60,
+      backgroundColor: theme.colors.surfaceElevated,
+      opacity: 0.72,
     },
     waist: {
       position: 'absolute',
@@ -445,6 +550,31 @@ function createStyles(theme: ThemeTokens) {
     },
     footRight: {
       right: '35.8%',
+    },
+    avatarHintCard: {
+      position: 'absolute',
+      top: 76,
+      right: 16,
+      maxWidth: 190,
+      zIndex: 24,
+      borderRadius: theme.radius.lg,
+      backgroundColor: theme.colors.overlay,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+      gap: 4,
+    },
+    avatarHintTitle: {
+      color: theme.colors.text,
+      fontSize: 12,
+      fontWeight: '800',
+    },
+    avatarHintText: {
+      color: theme.colors.textSecondary,
+      fontSize: 11,
+      lineHeight: 15,
+      fontWeight: '600',
     },
     slotArrow: {
       position: 'absolute',

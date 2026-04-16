@@ -29,3 +29,5 @@ backend/app/data/*.db
 backend/app/static/uploads/
 __pycache__/
 *.pyc
+
+.vercel

@@ -5,6 +5,8 @@
  *   id?: string,
  *   category?: string,
  *   bodySlot?: string,
+ *   clothingSlot?: string,
+ *   accessoryRole?: string,
  *   subcategory?: string,
  *   shortTitle?: string,
  *   fullTitle?: string,
@@ -188,6 +190,8 @@ export function chunkWardrobeItems(items, size = 2) {
  * @returns {boolean}
  */
 function matchesHeadwear(item) {
+  if (String(item?.clothingSlot || '').trim().toLowerCase() === 'headwear') return true;
+  if (String(item?.accessoryRole || '').trim().toLowerCase() === 'headwear') return true;
   if (resolveStoredStorageMode(item) === 'headwear-rail') return true;
   if (resolveStoredStorageMode(item) === 'accessory-hooks') return false;
   const marker = readItemMarker(item);
@@ -200,6 +204,8 @@ function matchesHeadwear(item) {
  */
 function matchesAccessory(item) {
   if (!item || item.category !== 'accessory') return false;
+  if (String(item?.clothingSlot || '').trim().toLowerCase() === 'headwear') return false;
+  if (String(item?.accessoryRole || '').trim().toLowerCase() === 'headwear') return false;
   if (resolveStoredStorageMode(item) === 'accessory-hooks') return true;
   if (resolveStoredStorageMode(item) === 'headwear-rail') return false;
   return !matchesHeadwear(item);
@@ -212,6 +218,8 @@ function matchesAccessory(item) {
 function readItemMarker(item) {
   return [
     item.bodySlot,
+    item.clothingSlot,
+    item.accessoryRole,
     item.category,
     item.subcategory,
     item.shortTitle,

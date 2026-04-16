@@ -1,5 +1,4 @@
 import {
-  type GarmentCategory,
   type Outfit,
   type OutfitGenerationResult,
   type OutfitItemRef,
@@ -7,7 +6,17 @@ import {
   type WardrobeItem,
   type WeatherModel,
 } from '../types/models';
-import { createId, getLayer, getWardrobeItemFullTitle, normalizeWardrobeSelection } from './wardrobe';
+import {
+  buildLookMissingSlotLabels,
+  buildLookSlotOptions,
+} from './look-preview';
+import {
+  createId,
+  getLayer,
+  getWardrobeItemFullTitle,
+  normalizeWardrobeSelection,
+  resolveWardrobeClothingSlot,
+} from './wardrobe';
 
 export interface RecommendationInput {
   wardrobe: WardrobeItem[];
@@ -16,7 +25,6 @@ export interface RecommendationInput {
   selectedDate: string;
 }
 
-const TOP_CATEGORIES: GarmentCategory[] = ['shirt', 'sweater', 'base'];
 const ACCESSORY_LIMIT = 2;
 const CORE_LIMIT = 3;
 
@@ -88,6 +96,7 @@ export function createOutfit(input: {
   const itemRefs: OutfitItemRef[] = garments.map(item => ({
     itemId: item.id,
     category: item.category,
+    clothingSlot: item.clothingSlot,
     bodySlot: item.bodySlot,
     layer: getLayer(item),
   }));
@@ -139,45 +148,52 @@ function buildRecommendationOutfit(
   });
 }
 
-function buildPools(wardrobe: WardrobeItem[]): Partial<Record<GarmentCategory, WardrobeItem[]>> {
-  return wardrobe.reduce<Partial<Record<GarmentCategory, WardrobeItem[]>>>((accumulator, item) => {
-    if (!accumulator[item.category]) accumulator[item.category] = [];
-    accumulator[item.category]?.push(item);
-    return accumulator;
-  }, {});
+function buildPools(wardrobe: WardrobeItem[]): Partial<Record<string, WardrobeItem[]>> {
+  return buildLookSlotOptions(wardrobe) as Partial<Record<string, WardrobeItem[]>>;
 }
 
 function buildCandidateSets(
-  pools: Partial<Record<GarmentCategory, WardrobeItem[]>>,
+  pools: Partial<Record<string, WardrobeItem[]>>,
   temperature: number,
 ): WardrobeItem[][] {
-  const dresses = take(pools.dress, CORE_LIMIT);
-  const tops = buildTopChoices(pools, CORE_LIMIT);
-  const bottoms = take(pools.pants, CORE_LIMIT);
+  const dresses = take(pools.full_body, CORE_LIMIT);
+  const tops = take(pools.tops, CORE_LIMIT);
+  const bottoms = take(pools.bottoms, CORE_LIMIT);
   const socks = take(pools.socks, CORE_LIMIT);
   const shoes = take(pools.shoes, CORE_LIMIT);
   const outerwear = take(pools.outerwear, 2);
-  const accessories = take(pools.accessory, ACCESSORY_LIMIT);
+  const headwear = take(pools.headwear, 1);
+  const bags = take(pools.bags, 1);
+  const jewelry = take(pools.jewelry, 1);
+  const accessories = take(pools.accessories, ACCESSORY_LIMIT);
   const candidates: WardrobeItem[][] = [];
 
   const primaryShoes = shoes.length ? shoes : [null];
   const primaryOuterwear = outerwear.length ? outerwear : [null];
+  const primaryHeadwear = headwear.length && temperature <= 12 ? [null, ...headwear] : [null];
+  const primaryBags = [null, ...bags];
+  const primaryJewelry = [null, ...jewelry];
   const primaryAccessories = [null, ...accessories];
 
   for (const dress of dresses) {
     for (const sock of socks.length ? socks : [null]) {
-    for (const shoe of primaryShoes) {
-      const baseLook = compactGarments([
-        dress,
-        sock,
-        shoe,
-        temperature <= 14 ? primaryOuterwear[0] : null,
-      ]);
-      candidates.push(baseLook);
-      if (primaryAccessories[1]) {
-        candidates.push(compactGarments([...baseLook, primaryAccessories[1]]));
+      for (const shoe of primaryShoes) {
+        const baseLook = compactGarments([
+          dress,
+          temperature <= 14 ? primaryOuterwear[0] : null,
+          sock,
+          shoe,
+          primaryHeadwear[1] || null,
+          primaryBags[1] || null,
+        ]);
+        candidates.push(baseLook);
+        if (primaryAccessories[1]) {
+          candidates.push(compactGarments([...baseLook, primaryAccessories[1]]));
+        }
+        if (primaryJewelry[1]) {
+          candidates.push(compactGarments([...baseLook, primaryJewelry[1]]));
+        }
       }
-    }
     }
   }
 
@@ -188,24 +204,30 @@ function buildCandidateSets(
     for (const bottom of bottomOptions) {
       for (const shoe of primaryShoes) {
         for (const sock of socks.length ? socks : [null]) {
-        const baseLook = compactGarments([
-          top,
-          bottom,
-          sock,
-          shoe,
-          temperature <= 12 && top ? primaryOuterwear[0] : null,
-        ]);
-        if (baseLook.length) {
-          candidates.push(baseLook);
-        }
+          const baseLook = compactGarments([
+            top,
+            temperature <= 12 && top ? primaryOuterwear[0] : null,
+            bottom,
+            sock,
+            shoe,
+            primaryHeadwear[1] || null,
+            primaryBags[1] || null,
+          ]);
+          if (baseLook.length) {
+            candidates.push(baseLook);
+          }
 
-        if (baseLook.length && primaryAccessories[1]) {
-          candidates.push(compactGarments([...baseLook, primaryAccessories[1]]));
-        }
+          if (baseLook.length && primaryAccessories[1]) {
+            candidates.push(compactGarments([...baseLook, primaryAccessories[1]]));
+          }
 
-        if (baseLook.length && primaryOuterwear[1] && top) {
-          candidates.push(compactGarments([top, bottom, sock, shoe, primaryOuterwear[1]]));
-        }
+          if (baseLook.length && primaryJewelry[1]) {
+            candidates.push(compactGarments([...baseLook, primaryJewelry[1]]));
+          }
+
+          if (baseLook.length && primaryOuterwear[1] && top) {
+            candidates.push(compactGarments([top, bottom, sock, shoe, primaryOuterwear[1], primaryBags[1] || null]));
+          }
         }
       }
     }
@@ -213,20 +235,19 @@ function buildCandidateSets(
 
   if (!candidates.length) {
     const fallback = compactGarments([
-      dresses[0] || tops[0] || bottoms[0] || shoes[0] || outerwear[0] || accessories[0] || null,
-      !dresses[0] ? bottoms[0] || shoes[0] || outerwear[0] || null : shoes[0] || outerwear[0] || null,
+      dresses[0] || tops[0] || bottoms[0] || shoes[0] || outerwear[0] || headwear[0] || bags[0] || accessories[0] || null,
+      !dresses[0] ? bottoms[0] || shoes[0] || outerwear[0] || bags[0] || null : shoes[0] || outerwear[0] || null,
     ]);
     if (fallback.length) candidates.push(fallback);
   }
 
-  return candidates;
-}
-
-function buildTopChoices(
-  pools: Partial<Record<GarmentCategory, WardrobeItem[]>>,
-  limit: number,
-): WardrobeItem[] {
-  return TOP_CATEGORIES.flatMap(category => take(pools[category], limit)).slice(0, limit);
+  return candidates.map(candidate => {
+    const itemsById = new Map(candidate.map(item => [item.id, item]));
+    const normalizedIds = normalizeWardrobeSelection(candidate, candidate.map(item => item.id));
+    return normalizedIds
+      .map(id => itemsById.get(id))
+      .filter((item): item is WardrobeItem => Boolean(item));
+  });
 }
 
 function rankItems(items: WardrobeItem[]): WardrobeItem[] {
@@ -246,12 +267,13 @@ function scoreCombination(
   missingItems: string[],
 ): number {
   let score = 42;
-  const hasDress = garments.some(item => item.category === 'dress');
-  const hasTop = garments.some(item => TOP_CATEGORIES.includes(item.category));
-  const hasBottom = garments.some(item => item.category === 'pants');
-  const hasShoes = garments.some(item => item.category === 'shoes');
-  const hasOuterwear = garments.some(item => item.category === 'outerwear');
-  const hasAccessory = garments.some(item => item.category === 'accessory');
+  const slots = new Set(garments.map(item => resolveWardrobeClothingSlot(item)));
+  const hasDress = slots.has('full_body');
+  const hasTop = slots.has('tops');
+  const hasBottom = slots.has('bottoms');
+  const hasShoes = slots.has('shoes');
+  const hasOuterwear = slots.has('outerwear');
+  const hasAccessory = slots.has('bags') || slots.has('jewelry') || slots.has('accessories') || slots.has('headwear');
 
   if (hasDress) score += 22;
   if (hasTop && hasBottom) score += 24;
@@ -290,10 +312,11 @@ function buildStyleName(garments: WardrobeItem[], userStyle: string, partial: bo
   const normalized = userStyle
     ? `${userStyle.charAt(0).toUpperCase()}${userStyle.slice(1)}`
     : 'Daily';
+  const slots = new Set(garments.map(item => resolveWardrobeClothingSlot(item)));
 
   if (partial) return `${normalized} Start`;
-  if (garments.some(item => item.category === 'dress')) return `${normalized} Dress`;
-  if (garments.some(item => item.category === 'outerwear')) return `${normalized} Layered`;
+  if (slots.has('full_body')) return `${normalized} Dress`;
+  if (slots.has('outerwear')) return `${normalized} Layered`;
   return `${normalized} Easy`;
 }
 
@@ -303,7 +326,7 @@ function buildReasoning(garments: WardrobeItem[], missingItems: string[], temper
     .slice(0, 4)
     .join(', ');
   const tempNote = temperature == null
-    ? 'It is a clean starting point for the mannequin.'
+    ? 'It is a clean starting point for the avatar preview.'
     : temperature <= 10
       ? 'The mix keeps enough coverage for colder weather.'
       : temperature >= 22
@@ -324,21 +347,7 @@ function collectWarnings(outfits: Outfit[]): string[] {
 }
 
 function computeMissingItems(garments: WardrobeItem[]): string[] {
-  const hasDress = garments.some(item => item.category === 'dress');
-  const hasTop = garments.some(item => TOP_CATEGORIES.includes(item.category));
-  const hasBottom = garments.some(item => item.category === 'pants');
-  const hasShoes = garments.some(item => item.category === 'shoes');
-  const missing: string[] = [];
-
-  if (hasDress) {
-    if (!hasShoes) missing.push('shoes');
-    return missing;
-  }
-
-  if (!hasTop) missing.push('a top');
-  if (!hasBottom) missing.push('bottoms');
-  if (!hasShoes) missing.push('shoes');
-  return missing;
+  return buildLookMissingSlotLabels(garments);
 }
 
 function buildCompletionPrompt(missingItems: string[]): string {

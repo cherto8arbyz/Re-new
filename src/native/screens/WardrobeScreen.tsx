@@ -15,7 +15,7 @@ import {
   View,
 } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Ionicons from 'expo/node_modules/@expo/vector-icons/Ionicons';
+import { Ionicons } from '@expo/vector-icons';
 
 import {
   getWardrobeItemCategoryPreview,
@@ -97,6 +97,7 @@ export function WardrobeScreen() {
   const [reviewIndex, setReviewIndex] = useState(0);
   const [analyzing, setAnalyzing] = useState(false);
   const [activeSectionKey, setActiveSectionKey] = useState<WardrobeSectionKey>('all');
+  const [selectedWardrobeItemId, setSelectedWardrobeItemId] = useState<string | null>(null);
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [upgradeModalVisible, setUpgradeModalVisible] = useState(false);
   const [upgradeUnlocked, setUpgradeUnlocked] = useState(false);
@@ -150,7 +151,11 @@ export function WardrobeScreen() {
     ? getBestWardrobeUploadReviewIndex(reviewEntries, reviewIndex)
     : 0;
   const selectedEntry = reviewEntries[currentReviewIndex] || null;
-  const selectedItem = selectedEntry?.item || null;
+  const selectedReviewItem = selectedEntry?.item || null;
+  const selectedWardrobeItem = useMemo(
+    () => state.wardrobeItems.find(item => item.id === selectedWardrobeItemId) || null,
+    [selectedWardrobeItemId, state.wardrobeItems],
+  );
   const reviewSummaryLabel = buildWardrobeUploadSummaryLabel(reviewEntries);
   const primaryAction = analyzing
     ? { enabled: false, label: 'Analyzing...' }
@@ -317,6 +322,21 @@ export function WardrobeScreen() {
     };
   }, [verifyPendingWardrobeUpgradePayment]);
 
+  useEffect(() => {
+    if (!selectedWardrobeItemId) return;
+    if (!state.wardrobeItems.some(item => item.id === selectedWardrobeItemId)) {
+      setSelectedWardrobeItemId(null);
+    }
+  }, [selectedWardrobeItemId, state.wardrobeItems]);
+
+  useEffect(() => {
+    if (!selectedWardrobeItemId) return;
+    const visibleItemIds = new Set(sceneSections.flatMap(scene => scene.items.map(item => item.id)));
+    if (!visibleItemIds.has(selectedWardrobeItemId)) {
+      setSelectedWardrobeItemId(null);
+    }
+  }, [sceneSections, selectedWardrobeItemId]);
+
   const openModal = () => {
     if (limitReached) {
       setUpgradeNotice(`Free plan limit is ${FREE_WARDROBE_LIMIT} items. Upgrade to store up to ${EXPANDED_WARDROBE_LIMIT}.`);
@@ -409,6 +429,17 @@ export function WardrobeScreen() {
     closeModal();
   };
 
+  const handleSelectWardrobeItem = useCallback((itemId: string) => {
+    setSelectedWardrobeItemId(current => current === itemId ? null : itemId);
+  }, []);
+
+  const handleRemoveWardrobeItem = useCallback((itemId?: string) => {
+    const targetItemId = String(itemId || selectedWardrobeItem?.id || '').trim();
+    if (!targetItemId) return;
+    dispatch({ type: 'REMOVE_WARDROBE_ITEM', payload: targetItemId });
+    setSelectedWardrobeItemId(null);
+  }, [dispatch, selectedWardrobeItem?.id]);
+
   const startUpgradeCheckout = useCallback(async () => {
     const existingPendingRaw = await AsyncStorage.getItem(pendingUpgradePaymentStorageKey);
     const existingPending = parsePendingUpgradePayment(existingPendingRaw);
@@ -452,7 +483,6 @@ export function WardrobeScreen() {
   }, [
     pendingUpgradeContextStorageKey,
     pendingUpgradePaymentStorageKey,
-    unlockWardrobeUpgrade,
     verifyPendingWardrobeUpgradePayment,
     userEmail,
     userId,
@@ -546,7 +576,7 @@ export function WardrobeScreen() {
                     <WardrobeSectionScene
                       section={scene.section}
                       rows={scene.rows}
-                      selectedItemId={null}
+                      selectedItemId={scene.items.some(item => item.id === selectedWardrobeItemId) ? selectedWardrobeItemId : null}
                       theme={theme}
                       minHeight={getWardrobeSceneMinHeight(
                         scene.section.storageMode,
@@ -554,7 +584,8 @@ export function WardrobeScreen() {
                         screenHeight,
                         isOverview,
                       )}
-                      onSelect={() => {}}
+                      onSelect={handleSelectWardrobeItem}
+                      onRemove={handleRemoveWardrobeItem}
                     />
                   </View>
                 ))}
@@ -582,6 +613,52 @@ export function WardrobeScreen() {
                 </View>
               </>
             )}
+
+            {selectedWardrobeItem ? (
+              <View style={styles.detailCard}>
+                <View style={styles.detailPreviewWrap}>
+                  {selectBestImageUri(selectedWardrobeItem) ? (
+                    <Image
+                      source={{ uri: selectBestImageUri(selectedWardrobeItem) }}
+                      style={styles.detailPreviewImage}
+                      resizeMode="contain"
+                    />
+                  ) : (
+                    <View style={styles.detailPreviewFallback}>
+                      <Ionicons name="shirt-outline" size={22} color={theme.colors.textSecondary} />
+                    </View>
+                  )}
+                </View>
+
+                <View style={styles.detailCopy}>
+                  <View style={styles.detailTagRow}>
+                    <View style={styles.detailTag}>
+                      <Text style={styles.detailTagText}>{getWardrobeItemCategoryPreview(selectedWardrobeItem)}</Text>
+                    </View>
+                    {getWardrobeItemColor(selectedWardrobeItem) ? (
+                      <View style={styles.detailTag}>
+                        <Text style={styles.detailTagText}>{formatMetaLabel(getWardrobeItemColor(selectedWardrobeItem))}</Text>
+                      </View>
+                    ) : null}
+                    {selectedWardrobeItem.requiresReview ? (
+                      <View style={[styles.detailTag, styles.detailTagWarn]}>
+                        <Text style={[styles.detailTagText, styles.detailTagWarnText]}>Needs review</Text>
+                      </View>
+                    ) : null}
+                  </View>
+
+                  <Text style={styles.detailTitle}>{getWardrobeItemShortTitle(selectedWardrobeItem)}</Text>
+                  <Text style={styles.detailMeta}>
+                    Tap pieces in the wardrobe scene to inspect them or remove them from the closet.
+                  </Text>
+                </View>
+
+                <Pressable onPress={() => handleRemoveWardrobeItem()} style={styles.detailRemoveButton}>
+                  <Ionicons name="trash-outline" size={16} color={theme.colors.text} />
+                  <Text style={styles.detailRemoveText}>Remove</Text>
+                </Pressable>
+              </View>
+            ) : null}
           </View>
         </ScrollView>
       </ImageBackground>
@@ -711,15 +788,15 @@ export function WardrobeScreen() {
                       </View>
                     ) : null}
 
-                    {selectedItem ? (
+                    {selectedReviewItem ? (
                       <>
                         <View style={styles.detectedRow}>
-                          <Text style={styles.detectedTitle}>{getWardrobeItemShortTitle(selectedItem)}</Text>
+                          <Text style={styles.detectedTitle}>{getWardrobeItemShortTitle(selectedReviewItem)}</Text>
                           <Text style={styles.detectedMeta}>
                             {[
-                              getWardrobeItemCategoryPreview(selectedItem),
-                              getWardrobeItemColor(selectedItem) ? formatMetaLabel(getWardrobeItemColor(selectedItem)) : '',
-                              selectedItem.requiresReview ? 'Needs review' : 'Ready to save',
+                              getWardrobeItemCategoryPreview(selectedReviewItem),
+                              getWardrobeItemColor(selectedReviewItem) ? formatMetaLabel(getWardrobeItemColor(selectedReviewItem)) : '',
+                              selectedReviewItem.requiresReview ? 'Needs review' : 'Ready to save',
                             ].filter(Boolean).join(' / ')}
                           </Text>
                         </View>
@@ -802,18 +879,6 @@ export function WardrobeScreen() {
   );
 }
 
-function getWardrobeSectionRowSize(storageMode: WardrobeStorageMode): number {
-  switch (storageMode) {
-    case 'shoe-shelf':
-    case 'drawer':
-    case 'headwear-rail':
-    case 'accessory-hooks':
-      return 3;
-    default:
-      return 2;
-  }
-}
-
 function getWardrobeSceneMinHeight(
   storageMode: WardrobeStorageMode,
   rowCount: number,
@@ -848,377 +913,6 @@ function getWardrobeSceneMinHeight(
     : Math.max(Math.round(viewportHeight * 0.42), 340);
 
   return Math.max(estimatedHeight, viewportFloor);
-}
-
-function renderSectionPreview(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-  theme: ThemeTokens,
-) {
-  const backdrop = renderPreviewTextureBackdrop(storageMode, styles);
-  if (storageMode === 'hanger') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={styles.previewRail} />
-        <View style={styles.previewHangerRow}>
-          <View style={styles.previewHangerItem} />
-          <View style={[styles.previewHangerItem, styles.previewHangerItemTall]} />
-          <View style={styles.previewHangerItem} />
-        </View>
-      </View>
-    );
-  }
-
-  if (storageMode === 'folded') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={styles.previewShelf} />
-        <View style={styles.previewFoldRow}>
-          <View style={styles.previewFoldBlock} />
-          <View style={[styles.previewFoldBlock, styles.previewFoldBlockWide]} />
-        </View>
-        <View style={[styles.previewShelf, styles.previewShelfLower]} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'shoe-shelf') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={[styles.previewShelf, styles.previewShelfLower]} />
-        <View style={styles.previewShoeRow}>
-          <View style={styles.previewShoe} />
-          <View style={styles.previewShoe} />
-          <View style={styles.previewShoe} />
-        </View>
-      </View>
-    );
-  }
-
-  if (storageMode === 'drawer') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={styles.previewDrawerFront} />
-        <View style={styles.previewDrawerRow}>
-          <View style={styles.previewSock} />
-          <View style={styles.previewSock} />
-          <View style={styles.previewSock} />
-        </View>
-      </View>
-    );
-  }
-
-  if (storageMode === 'headwear-rail') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={styles.previewRail} />
-        <View style={styles.previewHatRow}>
-          <View style={styles.previewHat} />
-          <View style={styles.previewHat} />
-          <View style={styles.previewHat} />
-        </View>
-      </View>
-    );
-  }
-
-  if (storageMode === 'accessory-hooks') {
-    return (
-      <View style={styles.previewScene}>
-        {backdrop}
-        <View style={styles.previewHookBar}>
-          <View style={styles.previewHook} />
-          <View style={styles.previewHook} />
-          <View style={styles.previewHook} />
-        </View>
-        <View style={styles.previewAccessoryRow}>
-          <View style={styles.previewAccessoryDot} />
-          <View style={[styles.previewAccessoryDot, { backgroundColor: theme.colors.accentSoft }]} />
-          <View style={styles.previewAccessoryDot} />
-        </View>
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.previewScene}>
-      {backdrop}
-      <View style={styles.previewRail} />
-      <View style={styles.previewFoldRow}>
-        <View style={styles.previewFoldBlock} />
-        <View style={styles.previewFoldBlock} />
-      </View>
-    </View>
-  );
-}
-
-function renderPreviewTextureBackdrop(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-) {
-  if (storageMode === 'hanger' || storageMode === 'headwear-rail') {
-    return (
-      <View style={styles.previewTextureWall}>
-        <View style={styles.previewTextureColumn} />
-        <View style={[styles.previewTextureColumn, styles.previewTextureColumnCenter]} />
-        <View style={styles.previewTextureColumn} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'folded' || storageMode === 'shoe-shelf') {
-    return (
-      <View style={styles.previewTextureWood}>
-        <View style={styles.previewTextureWoodLine} />
-        <View style={[styles.previewTextureWoodLine, styles.previewTextureWoodLineMid]} />
-        <View style={styles.previewTextureWoodLine} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'drawer') {
-    return (
-      <View style={styles.previewTextureDrawer}>
-        <View style={styles.previewTextureDrawerInset} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'accessory-hooks') {
-    return (
-      <View style={styles.previewTexturePegboard}>
-        {[0, 1, 2, 3].map(row => (
-          <View key={`preview-peg-${row}`} style={styles.previewPegRow}>
-            <View style={styles.previewPegDot} />
-            <View style={styles.previewPegDot} />
-            <View style={styles.previewPegDot} />
-            <View style={styles.previewPegDot} />
-          </View>
-        ))}
-      </View>
-    );
-  }
-
-  return null;
-}
-
-function renderClosetTextureBackdrop(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-) {
-  if (storageMode === 'hanger' || storageMode === 'headwear-rail') {
-    return (
-      <View pointerEvents="none" style={styles.closetTextureWall}>
-        <View style={styles.closetTextureColumn} />
-        <View style={[styles.closetTextureColumn, styles.closetTextureColumnCenter]} />
-        <View style={styles.closetTextureColumn} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'folded' || storageMode === 'shoe-shelf') {
-    return (
-      <View pointerEvents="none" style={styles.closetTextureWood}>
-        <View style={styles.closetTextureWoodLine} />
-        <View style={styles.closetTextureWoodLine} />
-        <View style={styles.closetTextureWoodLine} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'drawer') {
-    return (
-      <View pointerEvents="none" style={styles.closetTextureDrawer}>
-        <View style={styles.closetTextureDrawerInset} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'accessory-hooks') {
-    return (
-      <View pointerEvents="none" style={styles.closetTexturePegboard}>
-        {[0, 1, 2, 3, 4].map(row => (
-          <View key={`closet-peg-${row}`} style={styles.closetPegRow}>
-            <View style={styles.closetPegDot} />
-            <View style={styles.closetPegDot} />
-            <View style={styles.closetPegDot} />
-            <View style={styles.closetPegDot} />
-            <View style={styles.closetPegDot} />
-          </View>
-        ))}
-      </View>
-    );
-  }
-
-  return null;
-}
-
-function getClosetFrameModeStyle(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-) {
-  if (storageMode === 'drawer') return styles.closetFrameDrawer;
-  if (storageMode === 'folded' || storageMode === 'shoe-shelf') return styles.closetFrameShelf;
-  if (storageMode === 'accessory-hooks') return styles.closetFrameAccessory;
-  return styles.closetFrameHanger;
-}
-
-function renderClosetRow({
-  row,
-  rowIndex,
-  section,
-  selectedItemId,
-  onSelect,
-  styles,
-}: {
-  row: WardrobeItem[];
-  rowIndex: number;
-  section: WardrobeSectionEntry;
-  selectedItemId: string | null;
-  onSelect: React.Dispatch<React.SetStateAction<string | null>>;
-  styles: ReturnType<typeof createStyles>;
-}) {
-  const mode = section.storageMode;
-  const laneStyle = getClosetLaneStyle(mode, styles);
-  const slotStyle = getClosetSlotStyle(mode, styles);
-  const assetWrapStyle = getClosetAssetWrapStyle(mode, styles);
-  const assetStyle = getClosetAssetStyle(mode, styles);
-
-  return (
-    <View key={`${section.key}-${rowIndex}`} style={styles.closetLaneWrap}>
-      {renderClosetHardware(mode, styles)}
-      <View style={laneStyle}>
-        {row.map(item => {
-          const active = item.id === selectedItemId;
-          const image = selectBestImageUri(item);
-
-          return (
-            <Pressable
-              key={item.id}
-              onPress={() => onSelect(item.id)}
-              style={[slotStyle, active && styles.storageSlotActive]}
-            >
-              {renderClosetSlotTopper(mode, styles)}
-              <View style={assetWrapStyle}>
-                {image ? (
-                  <Image source={{ uri: image }} style={assetStyle} resizeMode="contain" />
-                ) : (
-                  <View style={styles.storageFallback}>
-                    <Ionicons name="image-outline" size={18} color="#8f98ab" />
-                  </View>
-                )}
-              </View>
-              <Text numberOfLines={1} style={styles.storageItemLabel}>
-                {getWardrobeItemShortTitle(item)}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-    </View>
-  );
-}
-
-function renderClosetHardware(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-) {
-  if (storageMode === 'hanger' || storageMode === 'headwear-rail') {
-    return (
-      <View style={styles.railHardware}>
-        <View style={styles.railHardwareShadow} />
-        <View style={styles.railHardwareBar} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'accessory-hooks') {
-    return (
-      <View style={styles.hookHardware}>
-        <View style={styles.hookHardwareBar} />
-        <View style={styles.hookHardwareRow}>
-          <View style={styles.hookHardwarePeg} />
-          <View style={styles.hookHardwarePeg} />
-          <View style={styles.hookHardwarePeg} />
-        </View>
-      </View>
-    );
-  }
-
-  if (storageMode === 'drawer') {
-    return (
-      <View style={styles.drawerHardware}>
-        <View style={styles.drawerHardwareFront} />
-        <View style={styles.drawerHardwareHandle} />
-      </View>
-    );
-  }
-
-  return (
-    <View style={styles.shelfHardware}>
-      <View style={styles.shelfHardwareTop} />
-      <View style={styles.shelfHardwareLip} />
-    </View>
-  );
-}
-
-function renderClosetSlotTopper(
-  storageMode: WardrobeStorageMode,
-  styles: ReturnType<typeof createStyles>,
-) {
-  if (storageMode === 'hanger' || storageMode === 'headwear-rail') {
-    return (
-      <View style={styles.slotHookWrap}>
-        <View style={styles.slotHookDot} />
-        <View style={styles.slotHookStem} />
-      </View>
-    );
-  }
-
-  if (storageMode === 'accessory-hooks') {
-    return <View style={styles.slotPeg} />;
-  }
-
-  return null;
-}
-
-function getClosetLaneStyle(storageMode: WardrobeStorageMode, styles: ReturnType<typeof createStyles>) {
-  if (storageMode === 'hanger') return styles.closetLaneHanger;
-  if (storageMode === 'headwear-rail') return styles.closetLaneHeadwear;
-  if (storageMode === 'accessory-hooks') return styles.closetLaneAccessories;
-  if (storageMode === 'drawer') return styles.closetLaneDrawer;
-  if (storageMode === 'shoe-shelf') return styles.closetLaneShelfCompact;
-  return styles.closetLaneShelf;
-}
-
-function getClosetSlotStyle(storageMode: WardrobeStorageMode, styles: ReturnType<typeof createStyles>) {
-  if (storageMode === 'hanger') return styles.storageSlotHanger;
-  if (storageMode === 'headwear-rail') return styles.storageSlotHeadwear;
-  if (storageMode === 'accessory-hooks') return styles.storageSlotAccessory;
-  if (storageMode === 'drawer') return styles.storageSlotDrawer;
-  if (storageMode === 'shoe-shelf') return styles.storageSlotShoe;
-  return styles.storageSlotFolded;
-}
-
-function getClosetAssetWrapStyle(storageMode: WardrobeStorageMode, styles: ReturnType<typeof createStyles>) {
-  if (storageMode === 'hanger') return styles.storageAssetWrapHanger;
-  if (storageMode === 'headwear-rail') return styles.storageAssetWrapHeadwear;
-  if (storageMode === 'accessory-hooks') return styles.storageAssetWrapAccessory;
-  if (storageMode === 'drawer') return styles.storageAssetWrapDrawer;
-  if (storageMode === 'shoe-shelf') return styles.storageAssetWrapShoe;
-  return styles.storageAssetWrapFolded;
-}
-
-function getClosetAssetStyle(storageMode: WardrobeStorageMode, styles: ReturnType<typeof createStyles>) {
-  if (storageMode === 'drawer') return styles.storageAssetImageDrawer;
-  if (storageMode === 'shoe-shelf') return styles.storageAssetImageShoe;
-  if (storageMode === 'headwear-rail') return styles.storageAssetImageHeadwear;
-  if (storageMode === 'accessory-hooks') return styles.storageAssetImageAccessory;
-  return styles.storageAssetImage;
 }
 
 function formatMetaLabel(value: string): string {

@@ -1,8 +1,7 @@
 import { buildStylistReply, createChatMessage } from '../../shared/chat';
 import { buildManualOutfit, generateOutfitRecommendations } from '../../shared/outfits';
-import { ensureAuthSessionAccessToken } from '../../shared/onboarding';
+import { buildUserProfile, ensureAuthSessionAccessToken, normalizeAvatarGender } from '../../shared/onboarding';
 import { normalizeAccentPaletteKey, normalizeCustomAccentHex, normalizeProfileBio } from '../../shared/profile';
-import { buildUserProfile } from '../../shared/onboarding';
 import { buildWardrobeItem, createId, DEFAULT_WARDROBE_FILTER, getLayer, normalizeWardrobeSelection } from '../../shared/wardrobe';
 import type {
   AppState,
@@ -33,6 +32,8 @@ export type AppAction =
   | { type: 'RESET_WARDROBE_FILTER' }
   | { type: 'COMPLETE_ONBOARDING'; payload: { session: AuthSession; profile: UserProfile } }
   | { type: 'SET_PROFILE_AVATAR'; payload: string }
+  | { type: 'SET_PROFILE_AVATAR_ASSETS'; payload: { avatarUrl: string; lookFaceAssetUrl?: string | null } }
+  | { type: 'SET_PROFILE_AVATAR_GENDER'; payload: UserProfile['avatarGender'] }
   | { type: 'SET_IDENTITY_REFERENCE_URLS'; payload: string[] }
   | { type: 'SET_PROFILE_BIO'; payload: string }
   | { type: 'ADD_WARDROBE_ITEM'; payload: WardrobeItem }
@@ -133,8 +134,34 @@ export function appReducer(state: AppState, action: AppAction): AppState {
               ...state.user,
               avatarUrl: action.payload,
               profileAvatarUrl: action.payload,
-              faceReferenceUrl: action.payload,
-              lookFaceAssetUrl: action.payload,
+            },
+          }
+        : state;
+    case 'SET_PROFILE_AVATAR_ASSETS': {
+      if (!state.user) return state;
+
+      const avatarUrl = String(action.payload.avatarUrl || '').trim();
+      const lookFaceAssetUrl = String(action.payload.lookFaceAssetUrl || '').trim();
+      const nextLookFaceAssetUrl = lookFaceAssetUrl || String(state.user.lookFaceAssetUrl || '').trim();
+
+      return {
+        ...state,
+        user: {
+          ...state.user,
+          avatarUrl,
+          profileAvatarUrl: avatarUrl,
+          lookFaceAssetUrl: nextLookFaceAssetUrl,
+          faceReferenceUrl: nextLookFaceAssetUrl || String(state.user.faceReferenceUrl || '').trim(),
+        },
+      };
+    }
+    case 'SET_PROFILE_AVATAR_GENDER':
+      return state.user
+        ? {
+            ...state,
+            user: {
+              ...state.user,
+              avatarGender: normalizeAvatarGender(action.payload),
             },
           }
         : state;
@@ -253,6 +280,8 @@ export function buildOnboardingAction(input: {
   name: string;
   style: StylePreference;
   avatarUrl: string;
+  avatarGender?: UserProfile['avatarGender'];
+  lookFaceAssetUrl?: string;
 }): AppAction {
   return {
     type: 'COMPLETE_ONBOARDING',
@@ -262,6 +291,8 @@ export function buildOnboardingAction(input: {
         name: input.name,
         style: input.style,
         avatarUrl: input.avatarUrl,
+        avatarGender: input.avatarGender,
+        lookFaceAssetUrl: input.lookFaceAssetUrl,
       }),
     },
   };
@@ -320,7 +351,7 @@ function toggleManualSelection(state: AppState, itemId: string): AppState {
 
   return {
     ...state,
-    manualSelectionIds: Array.from(selection),
+    manualSelectionIds: normalizeWardrobeSelection(state.wardrobeItems, Array.from(selection)),
   };
 }
 
@@ -489,7 +520,12 @@ function normalizeUserProfile(user: AppState['user'] | undefined): AppState['use
         ...user,
         name: String(user.name || '').trim() || 'User',
         style: user.style,
+        avatarGender: normalizeAvatarGender(user.avatarGender),
         bio: normalizeProfileBio(user.bio),
+        avatarUrl: String(user.avatarUrl || '').trim(),
+        profileAvatarUrl: String(user.profileAvatarUrl || user.avatarUrl || '').trim(),
+        lookFaceAssetUrl: String(user.lookFaceAssetUrl || '').trim(),
+        faceReferenceUrl: String(user.faceReferenceUrl || '').trim(),
         identityReferenceUrls: Array.isArray(user.identityReferenceUrls)
           ? user.identityReferenceUrls.map(value => String(value || '')).filter(Boolean)
           : [],
@@ -527,6 +563,7 @@ function normalizeOutfits(outfits: Outfit[] | undefined, wardrobeById: Map<strin
           itemRefs: garments.map(item => ({
             itemId: item.id,
             category: item.category,
+            clothingSlot: item.clothingSlot,
             bodySlot: item.bodySlot,
             layer: getLayer(item),
           })),

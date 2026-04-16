@@ -1,6 +1,7 @@
 import { AppState, type AppStateStatus } from 'react-native';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
+import type { AvatarGender } from '../../types/models';
 import {
   createDailyLookJobAsync,
   fetchDailyLookJobAsync,
@@ -30,7 +31,7 @@ interface UseDailyLookPollingInput {
   accessToken: string;
   availableGarments: DailyLookAvailableGarmentInput[];
   weatherContext: DailyLookWeatherContextInput;
-  gender?: string;
+  gender?: AvatarGender;
   pollIntervalMs?: number;
   api?: DailyLookApiClient;
   appStateAdapter?: AppStateAdapter;
@@ -39,11 +40,16 @@ interface UseDailyLookPollingInput {
 export function useDailyLookPolling(input: UseDailyLookPollingInput) {
   const enabled = input.enabled !== false;
   const pollIntervalMs = Math.max(1000, Math.trunc(input.pollIntervalMs || DEFAULT_POLL_INTERVAL_MS));
-  const api = input.api || {
-    createJob: createDailyLookJobAsync,
-    fetchJob: fetchDailyLookJobAsync,
-  };
-  const appStateAdapter = input.appStateAdapter || AppState;
+  const api = useMemo<DailyLookApiClient>(() => (
+    input.api ?? {
+      createJob: createDailyLookJobAsync,
+      fetchJob: fetchDailyLookJobAsync,
+    }
+  ), [input.api]);
+  const appStateAdapter = useMemo<AppStateAdapter>(
+    () => input.appStateAdapter ?? AppState,
+    [input.appStateAdapter],
+  );
 
   const jobId = useDailyLookJobStore(state => state.jobId);
   const status = useDailyLookJobStore(state => state.status);
@@ -155,18 +161,29 @@ export function useDailyLookPolling(input: UseDailyLookPollingInput) {
     await startGeneration();
   }, [clearJob, startGeneration]);
 
+  const refreshCurrentJob = useCallback(async () => {
+    const activeJobId = String(useDailyLookJobStore.getState().jobId || '').trim();
+    if (!activeJobId) {
+      await startGeneration();
+      return;
+    }
+
+    useDailyLookJobStore.setState(state => ({
+      ...state,
+      status: 'processing',
+      errorMessage: null,
+      lastUpdatedAt: Date.now(),
+    }));
+    await pollCurrentJob();
+  }, [pollCurrentJob, startGeneration]);
+
   useEffect(() => {
     if (!enabled || startupHandledRef.current) return;
     startupHandledRef.current = true;
 
     const snapshot = useDailyLookJobStore.getState();
     const hasJobId = Boolean(String(snapshot.jobId || '').trim());
-    if (!hasJobId && (snapshot.status === 'idle' || snapshot.status === 'failed')) {
-      void startGeneration();
-      return;
-    }
-
-    if (hasJobId && snapshot.status === 'failed') {
+    if (!hasJobId && snapshot.status === 'idle') {
       void startGeneration();
     }
   }, [enabled, startGeneration]);
@@ -202,6 +219,7 @@ export function useDailyLookPolling(input: UseDailyLookPollingInput) {
     isLoading: status !== 'completed' && status !== 'failed',
     startGeneration,
     generateAnotherVariant,
+    refreshCurrentJob,
   };
 }
 

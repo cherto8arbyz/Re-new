@@ -8,6 +8,9 @@ export const UPLOAD_INPUT_TYPES = ['single_item', 'person_outfit', 'unsupported'
 export const WEATHER_CONDITIONS = ['clear', 'cloudy', 'rain', 'snow', 'wind', 'unknown'] as const;
 export const THEME_MODES = ['dark', 'light'] as const;
 export const ACCENT_PALETTE_KEYS = ['blush', 'sky', 'mint', 'coral', 'custom'] as const;
+export const AVATAR_GENDERS = ['female', 'male'] as const;
+export const CLOTHING_SLOTS = ['headwear', 'tops', 'outerwear', 'bottoms', 'full_body', 'socks', 'shoes', 'bags', 'jewelry', 'accessories'] as const;
+export const ACCESSORY_ROLES = ['headwear', 'bag', 'eyewear', 'neckwear', 'wristwear', 'belt', 'jewelry', 'audio', 'other'] as const;
 
 export type AppTab = (typeof APP_TABS)[number];
 export type GarmentCategory = (typeof GARMENT_CATEGORIES)[number];
@@ -19,6 +22,9 @@ export type UploadInputType = (typeof UPLOAD_INPUT_TYPES)[number];
 export type WeatherCondition = (typeof WEATHER_CONDITIONS)[number];
 export type ThemeMode = (typeof THEME_MODES)[number];
 export type AccentPaletteKey = (typeof ACCENT_PALETTE_KEYS)[number];
+export type AvatarGender = (typeof AVATAR_GENDERS)[number];
+export type ClothingSlot = (typeof CLOTHING_SLOTS)[number];
+export type AccessoryRole = (typeof ACCESSORY_ROLES)[number];
 
 export interface AuthUser {
   id: string;
@@ -77,6 +83,7 @@ export interface UserProfile {
   id: string;
   name: string;
   style: StylePreference;
+  avatarGender: AvatarGender;
   bio: string;
   avatarUrl: string;
   profileAvatarUrl?: string;
@@ -102,6 +109,8 @@ export interface WardrobeItem {
   fullTitle: string;
   category: GarmentCategory;
   subcategory: string;
+  clothingSlot?: ClothingSlot;
+  accessoryRole?: AccessoryRole;
   imageUrl: string;
   thumbnailUrl: string;
   iconName: string;
@@ -134,6 +143,7 @@ export interface WardrobeItem {
 export interface OutfitItemRef {
   itemId: string;
   category: GarmentCategory;
+  clothingSlot?: ClothingSlot;
   bodySlot?: BodySlot;
   layer: number;
 }

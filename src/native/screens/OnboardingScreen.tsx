@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import {
+  ActivityIndicator,
   Image,
   Pressable,
   SafeAreaView,
@@ -12,9 +13,10 @@ import {
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 
 import { useAppContext } from '../context/AppContext';
-import { pickImageAssetAsync } from '../services/image-picker';
+import { pickImageAssetAsync, type PickedImageAsset } from '../services/image-picker';
+import { generateLookFaceAssetAsync } from '../services/look-face';
 import { theme } from '../theme';
-import { STYLE_PREFERENCES } from '../../types/models';
+import { AVATAR_GENDERS, STYLE_PREFERENCES } from '../../types/models';
 import { buildOnboardingAction } from '../state/app-reducer';
 import type { RootStackParamList } from '../navigation/types';
 
@@ -24,10 +26,12 @@ export function OnboardingScreen(_: Props) {
   const { state, dispatch } = useAppContext();
   const [name, setName] = useState('');
   const [style, setStyle] = useState<(typeof STYLE_PREFERENCES)[number]>('casual');
-  const [avatarUri, setAvatarUri] = useState('');
+  const [avatarGender, setAvatarGender] = useState<(typeof AVATAR_GENDERS)[number]>('female');
+  const [avatarAsset, setAvatarAsset] = useState<PickedImageAsset | null>(null);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const canSubmit = name.trim().length > 0 && avatarUri.length > 0;
+  const canSubmit = name.trim().length > 0 && Boolean(avatarAsset?.uri) && !submitting;
 
   const handlePickAvatar = async () => {
     const asset = await pickImageAssetAsync('library');
@@ -35,22 +39,35 @@ export function OnboardingScreen(_: Props) {
       setError('Photo access was not granted or no image was selected.');
       return;
     }
-    setAvatarUri(asset.uri);
+    setAvatarAsset(asset);
     setError(null);
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!canSubmit) {
       setError('Name and avatar are required.');
       return;
     }
 
+    if (!avatarAsset) return;
+
+    setSubmitting(true);
+    setError(null);
+
+    const lookFace = await generateLookFaceAssetAsync(avatarAsset);
+
     dispatch(buildOnboardingAction({
       session: state.authSession,
       name,
       style,
-      avatarUrl: avatarUri,
+      avatarUrl: avatarAsset.uri,
+      avatarGender,
+      ...(lookFace.success ? { lookFaceAssetUrl: lookFace.imageDataUrl } : {}),
     }));
+    if (!lookFace.success) {
+      setError('Avatar base could not be generated yet. You can refresh it later from Profile.');
+    }
+    setSubmitting(false);
   };
 
   return (
@@ -91,10 +108,27 @@ export function OnboardingScreen(_: Props) {
         </View>
 
         <View style={styles.field}>
+          <Text style={styles.label}>Avatar gender</Text>
+          <View style={styles.genderGrid}>
+            {AVATAR_GENDERS.map(item => (
+              <Pressable
+                key={item}
+                onPress={() => setAvatarGender(item)}
+                style={[styles.genderChip, avatarGender === item && styles.genderChipActive]}
+              >
+                <Text style={[styles.genderText, avatarGender === item && styles.genderTextActive]}>
+                  {item === 'male' ? 'Male' : 'Female'}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+
+        <View style={styles.field}>
           <Text style={styles.label}>Avatar upload</Text>
           <Pressable onPress={handlePickAvatar} style={styles.avatarPicker}>
-            {avatarUri ? (
-              <Image source={{ uri: avatarUri }} style={styles.avatarPreview} />
+            {avatarAsset?.uri ? (
+              <Image source={{ uri: avatarAsset.uri }} style={styles.avatarPreview} />
             ) : (
               <Text style={styles.avatarPlaceholder}>Choose profile photo</Text>
             )}
@@ -103,8 +137,9 @@ export function OnboardingScreen(_: Props) {
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
-        <Pressable onPress={handleSubmit} disabled={!canSubmit} style={[styles.submit, !canSubmit && styles.submitDisabled]}>
-          <Text style={styles.submitText}>Create My Wardrobe</Text>
+        <Pressable onPress={() => void handleSubmit()} disabled={!canSubmit} style={[styles.submit, !canSubmit && styles.submitDisabled]}>
+          {submitting ? <ActivityIndicator size="small" color={theme.colors.accentContrast} /> : null}
+          <Text style={styles.submitText}>{submitting ? 'Building avatar...' : 'Create My Wardrobe'}</Text>
         </Pressable>
       </ScrollView>
     </SafeAreaView>
@@ -158,6 +193,10 @@ const styles = StyleSheet.create({
     flexWrap: 'wrap',
     gap: theme.spacing.sm,
   },
+  genderGrid: {
+    flexDirection: 'row',
+    gap: theme.spacing.sm,
+  },
   styleChip: {
     borderWidth: 1,
     borderColor: theme.colors.border,
@@ -176,6 +215,28 @@ const styles = StyleSheet.create({
     textTransform: 'capitalize',
   },
   styleTextActive: {
+    color: theme.colors.accentContrast,
+  },
+  genderChip: {
+    flex: 1,
+    minHeight: 46,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
+    borderRadius: 999,
+    backgroundColor: theme.colors.surface,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 14,
+  },
+  genderChipActive: {
+    backgroundColor: theme.colors.accent,
+    borderColor: theme.colors.accent,
+  },
+  genderText: {
+    color: theme.colors.text,
+    fontWeight: '700',
+  },
+  genderTextActive: {
     color: theme.colors.accentContrast,
   },
   avatarPicker: {
@@ -206,6 +267,9 @@ const styles = StyleSheet.create({
     borderRadius: theme.radius.md,
     paddingVertical: 14,
     alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
   },
   submitDisabled: {
     opacity: 0.45,

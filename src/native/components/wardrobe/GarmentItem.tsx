@@ -7,6 +7,7 @@ import {
   Text,
   View,
 } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
 import { getWardrobeItemShortTitle, selectBestImageUri } from '../../../shared/wardrobe';
 import type { WardrobeItem } from '../../../types/models';
@@ -22,6 +23,7 @@ interface GarmentItemProps {
   labelLines?: number;
   hangingOffset?: number;
   onPress: (id: string) => void;
+  onRemove?: (id: string) => void;
 }
 
 export const GarmentItem = memo(function GarmentItem({
@@ -33,6 +35,7 @@ export const GarmentItem = memo(function GarmentItem({
   labelLines = 2,
   hangingOffset = 0,
   onPress,
+  onRemove,
 }: GarmentItemProps) {
   const imageUri = useMemo(() => selectBestImageUri(item), [item]);
   const emphasis = useRef(new Animated.Value(selected ? 1 : 0)).current;
@@ -71,6 +74,21 @@ export const GarmentItem = memo(function GarmentItem({
       style={[styles.pressable, isHanging && styles.pressableHanging]}
     >
       <Animated.View style={animatedStyle}>
+        {selected && onRemove ? (
+          <Pressable
+            onPress={() => onRemove(item.id)}
+            hitSlop={8}
+            style={[
+              styles.removeChip,
+              {
+                backgroundColor: theme.colors.surfaceElevated,
+                borderColor: theme.colors.accent,
+              },
+            ]}
+          >
+            <Ionicons name="trash-outline" size={14} color={theme.colors.accent} />
+          </Pressable>
+        ) : null}
         <View
           style={[
             styles.assetFrame,
@@ -135,6 +153,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     width: '100%',
+  },
+  removeChip: {
+    position: 'absolute',
+    top: 4,
+    right: 6,
+    width: 30,
+    height: 30,
+    borderRadius: 999,
+    borderWidth: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 8,
   },
   assetFrameRegular: {
     minHeight: 164,

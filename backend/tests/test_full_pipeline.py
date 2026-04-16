@@ -141,10 +141,14 @@ class TestFalFaceSwapProvider(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             asyncio.run(provider.swap_face("https://base.png", "https://face.png"))
 
-    def test_swap_calls_fal_subscribe_with_correct_payload(self) -> None:
+    def test_swap_calls_fal_submit_with_correct_payload(self) -> None:
         provider = self._make_provider()
         mock_client = MagicMock()
-        mock_client.subscribe.return_value = {"image": {"url": "https://cdn.fal.ai/swapped.png"}}
+        handle = MagicMock()
+        handle.request_id = "req-123"
+        handle.status.return_value = MagicMock(status="COMPLETED", position=None)
+        handle.get.return_value = {"image": {"url": "https://cdn.fal.ai/swapped.png"}}
+        mock_client.submit.return_value = handle
 
         fal_module = MagicMock()
         fal_module.SyncClient.return_value = mock_client
@@ -154,7 +158,7 @@ class TestFalFaceSwapProvider(unittest.TestCase):
                 provider.swap_face("https://base.png", "https://face.png")
             )
 
-        call_args = mock_client.subscribe.call_args
+        call_args = mock_client.submit.call_args
         payload = call_args.kwargs.get("arguments") or call_args.args[1]
         self.assertEqual(payload["base_image_url"], "https://base.png")
         self.assertEqual(payload["swap_image_url"], "https://face.png")

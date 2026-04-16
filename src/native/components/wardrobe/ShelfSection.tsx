@@ -13,6 +13,7 @@ interface ShelfSectionProps {
   selectedItemId: string | null;
   theme: ThemeTokens;
   onSelect: (id: string) => void;
+  onRemove?: (id: string) => void;
 }
 
 export const ShelfSection = memo(function ShelfSection({
@@ -21,6 +22,7 @@ export const ShelfSection = memo(function ShelfSection({
   selectedItemId,
   theme,
   onSelect,
+  onRemove,
 }: ShelfSectionProps) {
   const compact = section.storageMode === 'drawer' || section.storageMode === 'accessory-hooks' || section.storageMode === 'shoe-shelf';
   const tray = section.storageMode === 'drawer' || section.storageMode === 'accessory-hooks';
@@ -48,6 +50,7 @@ export const ShelfSection = memo(function ShelfSection({
                   compact={compact}
                   labelLines={1}
                   onPress={onSelect}
+                  onRemove={onRemove}
                 />
               </View>
             ))}
@@ -84,4 +87,3 @@ const styles = StyleSheet.create({
     justifyContent: 'flex-end',
   },
 });
-
