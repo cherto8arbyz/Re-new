@@ -37,6 +37,7 @@ import {
   type IdentityCaptureStepId,
 } from './face-capture.constants';
 import {
+  buildIdentityFailureCopy,
   countCapturedIdentitySteps,
   evaluateIdentityCaptureGuidance,
   getIdentityCaptureStep,
@@ -46,6 +47,7 @@ import {
   getNextIdentityCaptureStepIndex,
   isGenerateAvatarDisabled,
   isIdentityCaptureReviewReady,
+  normalizeIdentityUploadErrorMessage,
   type IdentityCapturePhotoRecord,
 } from './identity-capture.logic';
 
@@ -57,6 +59,8 @@ export function IdentityCaptureScreen({ navigation }: Props) {
   const { state, dispatch, theme } = useAppContext();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const cameraRef = useRef<CameraView | null>(null);
+  const reviewScrollRef = useRef<ScrollView | null>(null);
+  const reviewCardOffsetsRef = useRef<Partial<Record<IdentityCaptureStepId, number>>>({});
   const permissionRequestedRef = useRef(false);
 
   const [permissionResponse, requestPermission] = useCameraPermissions();
@@ -84,6 +88,12 @@ export function IdentityCaptureScreen({ navigation }: Props) {
   const progressLabel = getIdentityProgressLabel(capturedCount);
   const isReviewReady = isIdentityCaptureReviewReady(capturedPhotos);
   const guidance = evaluateIdentityCaptureGuidance(activeStep.id, detectorAvailability.mode, null);
+  const normalizedError = useMemo(() => (
+    error ? normalizeIdentityUploadErrorMessage(error) : null
+  ), [error]);
+  const failureCopy = useMemo(() => (
+    failedStepId && error ? buildIdentityFailureCopy(failedStepId, error) : null
+  ), [error, failedStepId]);
   const orderedPreparedPhotos = useMemo(
     () => steps.map(step => capturedPhotos[step.id]).filter((photo): photo is PreparedIdentityPhoto => Boolean(photo)),
     [capturedPhotos, steps],
@@ -117,6 +127,35 @@ export function IdentityCaptureScreen({ navigation }: Props) {
     permissionRequestedRef.current = true;
     void requestPermission();
   }, [permissionResponse, requestPermission]);
+
+  const scrollToFailedStep = useCallback((stepId: IdentityCaptureStepId) => {
+    const targetOffset = reviewCardOffsetsRef.current[stepId];
+    if (!Number.isFinite(targetOffset)) return;
+
+    reviewScrollRef.current?.scrollTo({
+      y: Math.max(Number(targetOffset) - 72, 0),
+      animated: true,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (screenMode !== 'review' || !failedStepId) return;
+
+    const timeoutId = setTimeout(() => {
+      scrollToFailedStep(failedStepId);
+    }, 120);
+
+    return () => clearTimeout(timeoutId);
+  }, [failedStepId, screenMode, scrollToFailedStep]);
+
+  const handleReviewCardLayout = useCallback((stepId: IdentityCaptureStepId, offsetY: number) => {
+    reviewCardOffsetsRef.current[stepId] = offsetY;
+    if (screenMode === 'review' && failedStepId === stepId) {
+      requestAnimationFrame(() => {
+        scrollToFailedStep(stepId);
+      });
+    }
+  }, [failedStepId, screenMode, scrollToFailedStep]);
 
   const handleCaptureStep = useCallback(async () => {
     if (captureDisabled) {
@@ -299,13 +338,29 @@ export function IdentityCaptureScreen({ navigation }: Props) {
         />
 
         {screenMode === 'review' ? (
-          <ScrollView contentContainerStyle={styles.reviewContent} showsVerticalScrollIndicator={false}>
+          <ScrollView
+            ref={reviewScrollRef}
+            contentContainerStyle={styles.reviewContent}
+            showsVerticalScrollIndicator={false}
+          >
             <View style={styles.reviewIntro}>
               <Text style={styles.reviewTitle}>Сводка из 5 фото</Text>
               <Text style={styles.reviewText}>
                 Нажмите на любой кадр, если хотите переснять конкретный ракурс до отправки на сервер.
               </Text>
             </View>
+
+            {failureCopy ? (
+              <View style={styles.failureBanner}>
+                <View style={styles.failureBannerIcon}>
+                  <Ionicons name="alert-circle" size={18} color={theme.colors.danger} />
+                </View>
+                <View style={styles.failureBannerCopy}>
+                  <Text style={styles.failureBannerTitle}>{failureCopy.title}</Text>
+                  <Text style={styles.failureBannerText}>{failureCopy.detail}</Text>
+                </View>
+              </View>
+            ) : null}
 
             <View style={styles.reviewGrid}>
               {steps.map(step => {
@@ -315,17 +370,28 @@ export function IdentityCaptureScreen({ navigation }: Props) {
                   <Pressable
                     key={step.id}
                     onPress={() => handleRetakeStep(step.id)}
+                    onLayout={event => handleReviewCardLayout(step.id, event.nativeEvent.layout.y)}
                     style={[styles.reviewCard, hasFailure && styles.reviewCardFailure]}
                   >
-                    {photo ? (
-                      <Image source={{ uri: photo.previewUri }} resizeMode="cover" style={styles.reviewImage} />
-                    ) : (
-                      <View style={styles.reviewPlaceholder}>
-                        <Ionicons name="camera-outline" size={28} color={theme.colors.muted} />
-                      </View>
-                    )}
+                    <View style={styles.reviewImageShell}>
+                      {photo ? (
+                        <Image source={{ uri: photo.previewUri }} resizeMode="cover" style={styles.reviewImage} />
+                      ) : (
+                        <View style={styles.reviewPlaceholder}>
+                          <Ionicons name="camera-outline" size={28} color={theme.colors.muted} />
+                        </View>
+                      )}
+                      {hasFailure ? (
+                        <View style={styles.reviewErrorBadge}>
+                          <Ionicons name="alert-circle" size={12} color="#ffffff" />
+                          <Text style={styles.reviewErrorBadgeText}>Ошибка</Text>
+                        </View>
+                      ) : null}
+                    </View>
                     <View style={styles.reviewMeta}>
-                      <Text style={styles.reviewLabel}>{getIdentityStepReviewLabel(step.id)}</Text>
+                      <Text style={[styles.reviewLabel, hasFailure && styles.reviewLabelFailure]}>
+                        {getIdentityStepReviewLabel(step.id)}
+                      </Text>
                       <Text style={styles.reviewRetake}>Нажмите, чтобы переснять</Text>
                     </View>
                   </Pressable>
@@ -333,7 +399,7 @@ export function IdentityCaptureScreen({ navigation }: Props) {
               })}
             </View>
 
-            {error ? <Text style={styles.error}>{error}</Text> : null}
+            {!failureCopy && normalizedError ? <Text style={styles.error}>{normalizedError}</Text> : null}
 
             <Pressable
               onPress={() => void handleSubmit()}
@@ -390,7 +456,7 @@ export function IdentityCaptureScreen({ navigation }: Props) {
               </Text>
               <Text style={styles.stepSupport}>{supportText}</Text>
 
-              {error ? <Text style={styles.error}>{error}</Text> : null}
+              {normalizedError ? <Text style={styles.error}>{normalizedError}</Text> : null}
 
               <View style={styles.captureActions}>
                 {screenMode === 'preview' ? (
@@ -536,7 +602,7 @@ function StepRail({
               isFailed && styles.stepChipFailed,
             ]}
           >
-            <Text style={styles.stepChipLabel}>{step.reviewLabel}</Text>
+            <Text style={[styles.stepChipLabel, isFailed && styles.stepChipLabelFailed]}>{step.reviewLabel}</Text>
           </View>
         );
       })}
@@ -631,11 +697,15 @@ function createStyles(theme: ThemeTokens) {
     },
     stepChipFailed: {
       borderColor: theme.colors.danger,
+      backgroundColor: theme.mode === 'light' ? '#FFE7E7' : 'rgba(255, 107, 107, 0.14)',
     },
     stepChipLabel: {
       color: theme.colors.text,
       fontSize: 12,
       fontWeight: '800',
+    },
+    stepChipLabelFailed: {
+      color: theme.colors.danger,
     },
     cameraShell: {
       position: 'relative',
@@ -771,6 +841,39 @@ function createStyles(theme: ThemeTokens) {
       backgroundColor: theme.colors.surface,
       padding: theme.spacing.md,
     },
+    failureBanner: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: theme.spacing.sm,
+      borderRadius: theme.radius.xl,
+      borderWidth: 1,
+      borderColor: theme.colors.danger,
+      backgroundColor: theme.mode === 'light' ? '#FFF0F0' : 'rgba(255, 107, 107, 0.1)',
+      padding: theme.spacing.md,
+    },
+    failureBannerIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: theme.mode === 'light' ? '#FFE1E1' : 'rgba(255, 107, 107, 0.16)',
+    },
+    failureBannerCopy: {
+      flex: 1,
+      gap: 4,
+    },
+    failureBannerTitle: {
+      color: theme.colors.danger,
+      fontSize: 14,
+      fontWeight: '900',
+    },
+    failureBannerText: {
+      color: theme.colors.text,
+      fontSize: 13,
+      lineHeight: 19,
+      fontWeight: '700',
+    },
     reviewTitle: {
       color: theme.colors.text,
       fontSize: 24,
@@ -797,6 +900,10 @@ function createStyles(theme: ThemeTokens) {
     },
     reviewCardFailure: {
       borderColor: theme.colors.danger,
+      backgroundColor: theme.mode === 'light' ? '#FFF8F8' : theme.colors.surface,
+    },
+    reviewImageShell: {
+      position: 'relative',
     },
     reviewImage: {
       width: '100%',
@@ -810,6 +917,23 @@ function createStyles(theme: ThemeTokens) {
       justifyContent: 'center',
       backgroundColor: theme.colors.surfaceElevated,
     },
+    reviewErrorBadge: {
+      position: 'absolute',
+      top: 10,
+      left: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 6,
+      borderRadius: theme.radius.pill,
+      backgroundColor: theme.colors.danger,
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+    },
+    reviewErrorBadgeText: {
+      color: '#ffffff',
+      fontSize: 11,
+      fontWeight: '900',
+    },
     reviewMeta: {
       gap: 4,
       paddingHorizontal: 12,
@@ -820,10 +944,16 @@ function createStyles(theme: ThemeTokens) {
       fontSize: 14,
       fontWeight: '900',
     },
+    reviewLabelFailure: {
+      color: theme.colors.danger,
+    },
     reviewRetake: {
       color: theme.colors.textSecondary,
       fontSize: 12,
       fontWeight: '700',
+    },
+    reviewRetakeFailure: {
+      color: theme.colors.danger,
     },
     submitButton: {
       minHeight: 58,

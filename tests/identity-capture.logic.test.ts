@@ -1,10 +1,12 @@
 import { describe, expect, it } from './runner.js';
 import {
+  buildIdentityFailureCopy,
   countCapturedIdentitySteps,
   evaluateIdentityCaptureGuidance,
   getNextIdentityCaptureStepIndex,
   isGenerateAvatarDisabled,
   isIdentityCaptureReviewReady,
+  normalizeIdentityUploadErrorMessage,
 } from '../src/native/screens/identity-capture.logic.ts';
 
 describe('identity capture submit state', () => {
@@ -131,5 +133,19 @@ describe('identity capture live guidance', () => {
     expect(readyPose.status).toBe('ready');
     expect(readyPose.captureEnabled).toBe(true);
     expect(readyPose.message).toBe('Отлично! Снимаем');
+  });
+});
+
+describe('identity capture upload errors', () => {
+  it('normalizes backend face-detection errors into readable Russian copy', () => {
+    expect(normalizeIdentityUploadErrorMessage('Identity upload request failed: No face detected. Upload a photo with one clearly visible face.'))
+      .toBe('Лицо не найдено. Переснимите фото так, чтобы лицо было видно целиком и без сильной тени.');
+  });
+
+  it('builds a failed-step summary with the exact pose label', () => {
+    const failure = buildIdentityFailureCopy('front', 'No face detected. Upload a photo with one clearly visible face.');
+
+    expect(failure.title).toBe('Ошибка в кадре «Прямо»');
+    expect(failure.detail).toBe('Лицо не найдено. Переснимите фото так, чтобы лицо было видно целиком и без сильной тени. Нажмите на карточку и переснимите именно этот ракурс.');
   });
 });

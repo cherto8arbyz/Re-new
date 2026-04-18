@@ -148,6 +148,52 @@ export function getIdentityStepReviewLabel(stepId: IdentityCaptureStepId): strin
   return (IDENTITY_CAPTURE_STEPS.find(step => step.id === stepId) || IDENTITY_CAPTURE_STEPS[0]).reviewLabel;
 }
 
+export function normalizeIdentityUploadErrorMessage(message: string | null | undefined): string {
+  const normalized = String(message || '').trim();
+  if (!normalized) {
+    return 'Не удалось проверить identity-фото.';
+  }
+
+  const lower = normalized.toLowerCase();
+  if (lower.includes('identity upload request failed:')) {
+    const nestedMessage = normalized.split(':').slice(1).join(':').trim();
+    return nestedMessage ? normalizeIdentityUploadErrorMessage(nestedMessage) : 'Не удалось отправить фото на сервер.';
+  }
+  if (lower.includes('no face detected')) {
+    return 'Лицо не найдено. Переснимите фото так, чтобы лицо было видно целиком и без сильной тени.';
+  }
+  if (lower.includes('multiple faces detected')) {
+    return 'В кадре должно быть только одно лицо. Уберите других людей из фона и переснимите фото.';
+  }
+  if (lower.includes('face is not clear enough')) {
+    return 'Лицо распознано недостаточно четко. Подойдите ближе к камере и добавьте свет.';
+  }
+  if (lower.includes('image could not be processed')) {
+    return 'Фото не удалось обработать. Переснимите этот ракурс без размытия.';
+  }
+  if (lower.includes('identity upload timed out')) {
+    return 'Загрузка зависла по сети. Проверьте, что телефон и ноутбук в одной сети, и попробуйте снова.';
+  }
+  if (lower.includes('identity upload failed with status')) {
+    return 'Сервер не принял этот кадр. Переснимите фото и попробуйте снова.';
+  }
+
+  return normalized;
+}
+
+export function buildIdentityFailureCopy(
+  stepId: IdentityCaptureStepId,
+  message: string | null | undefined,
+): { title: string; detail: string } {
+  const label = getIdentityStepReviewLabel(stepId);
+  const detail = normalizeIdentityUploadErrorMessage(message);
+
+  return {
+    title: `Ошибка в кадре «${label}»`,
+    detail: `${detail} Нажмите на карточку и переснимите именно этот ракурс.`,
+  };
+}
+
 function normalizePhotoCount(photoCount: number): number {
   if (!Number.isFinite(photoCount)) return 0;
   return Math.max(0, Math.trunc(photoCount));
