@@ -1,5 +1,5 @@
 import type { PickedImageAsset } from './image-picker';
-import { resolveNativeBackendBaseUrl } from './backend-url.js';
+import { resolveNativeBackendBaseUrl } from './backend-url';
 
 const LOOK_FACE_TIMEOUT_MS = 45000;
 

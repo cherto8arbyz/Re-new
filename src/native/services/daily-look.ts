@@ -1,5 +1,5 @@
 import type { AvatarGender } from '../../types/models';
-import { resolveNativeBackendBaseUrl } from './backend-url.js';
+import { resolveNativeBackendBaseUrl } from './backend-url';
 
 export type DailyLookJobStatus =
   | 'idle'

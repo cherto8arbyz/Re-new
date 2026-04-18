@@ -1,7 +1,7 @@
 import { manipulateAsync, SaveFormat, type Action } from 'expo-image-manipulator';
 
 import type { PickedImageAsset } from './image-picker';
-import { resolveNativeBackendBaseUrl } from './backend-url.js';
+import { resolveNativeBackendBaseUrl } from './backend-url';
 import {
   IDENTITY_IMAGE_MAX_DIMENSION,
   MAX_IDENTITY_UPLOAD_BYTES,

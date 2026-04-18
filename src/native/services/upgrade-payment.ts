@@ -1,4 +1,4 @@
-import { resolveNativeBackendBaseUrl } from './backend-url.js';
+import { resolveNativeBackendBaseUrl } from './backend-url';
 
 export type UpgradeContext = 'wardrobe' | 'ai_looks';
 
