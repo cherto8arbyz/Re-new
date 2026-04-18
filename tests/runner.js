@@ -161,6 +161,8 @@ async function main() {
   await runAll();
   await import('./forecast-service.test.js');
   await runAll();
+  await import('./backend-url-rewrite.test.js');
+  await runAll();
   await import('./wardrobe-management.test.js');
   await runAll();
   await import('./wardrobe-layout.test.js');

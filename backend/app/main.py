@@ -1,10 +1,12 @@
 import asyncio
 import base64
 from datetime import datetime
+import ipaddress
 import json
 import logging
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -678,7 +680,42 @@ def to_data_url(raw: bytes, mime_type: str) -> str:
 
 
 def _resolve_public_base_url(request: Request) -> str:
-  return settings.public_base_url or str(request.base_url).rstrip("/")
+  request_base_url = str(request.base_url).rstrip("/")
+  configured_base_url = settings.public_base_url
+
+  if not configured_base_url:
+    return request_base_url
+  if _should_prefer_request_base_url(configured_base_url, request_base_url):
+    return request_base_url
+  return configured_base_url
+
+
+def _should_prefer_request_base_url(configured_base_url: str, request_base_url: str) -> bool:
+  try:
+    configured_host = (urlparse(configured_base_url).hostname or "").strip().lower()
+    request_host = (urlparse(request_base_url).hostname or "").strip().lower()
+  except ValueError:
+    return False
+
+  if not configured_host or not request_host:
+    return False
+  if configured_host == request_host:
+    return False
+
+  return _is_local_network_host(configured_host)
+
+
+def _is_local_network_host(host: str) -> bool:
+  normalized_host = str(host or "").strip().lower()
+  if normalized_host in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}:
+    return True
+
+  try:
+    address = ipaddress.ip_address(normalized_host)
+  except ValueError:
+    return False
+
+  return address.is_private or address.is_loopback or address.is_link_local
 
 
 def _resolve_database_driver(database_url: str) -> str:

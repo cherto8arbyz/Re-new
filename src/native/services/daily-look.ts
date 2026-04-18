@@ -1,5 +1,5 @@
-import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
 import type { AvatarGender } from '../../types/models';
+import { resolveNativeBackendBaseUrl } from './backend-url.js';
 
 export type DailyLookJobStatus =
   | 'idle'
@@ -70,7 +70,7 @@ export class DailyLookApiError extends Error {
 const uploadedDailyLookImageCache = new Map<string, string>();
 
 export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Promise<DailyLookGenerateResponse> {
-  const baseUrl = resolveBackendBaseUrl({ preferProxy: false });
+  const baseUrl = resolveNativeBackendBaseUrl({ preferProxy: false });
   const accessToken = String(input.accessToken || '').trim();
   if (!baseUrl) {
     throw new DailyLookApiError('Image pipeline URL is not configured.', 0);
@@ -177,7 +177,7 @@ export async function fetchDailyLookJobAsync(input: {
   accessToken: string;
   jobId: string;
 }): Promise<DailyLookJobResponse> {
-  const baseUrl = resolveBackendBaseUrl({ preferProxy: false });
+  const baseUrl = resolveNativeBackendBaseUrl({ preferProxy: false });
   const accessToken = String(input.accessToken || '').trim();
   const jobId = String(input.jobId || '').trim();
   if (!baseUrl) {

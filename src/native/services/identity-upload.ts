@@ -1,7 +1,7 @@
 import { manipulateAsync, SaveFormat, type Action } from 'expo-image-manipulator';
 
-import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
 import type { PickedImageAsset } from './image-picker';
+import { resolveNativeBackendBaseUrl } from './backend-url.js';
 import {
   IDENTITY_IMAGE_MAX_DIMENSION,
   MAX_IDENTITY_UPLOAD_BYTES,
@@ -13,6 +13,8 @@ const COMPRESSION_PRESETS = [
   { maxDimension: 896, compress: 0.55 },
   { maxDimension: 768, compress: 0.5 },
 ] as const;
+
+const IDENTITY_UPLOAD_TIMEOUT_MS = 30000;
 
 export interface PreparedIdentityPhoto {
   id: string;
@@ -89,7 +91,7 @@ export async function uploadIdentityReferencePhotosAsync(input: {
   photos: PreparedIdentityPhoto[];
   accessToken: string;
 }): Promise<IdentityUploadResult> {
-  const baseUrl = resolveBackendBaseUrl({ preferProxy: false });
+  const baseUrl = resolveNativeBackendBaseUrl({ preferProxy: false });
   if (!baseUrl) {
     throw new Error('Image pipeline URL is not configured.');
   }
@@ -109,25 +111,43 @@ export async function uploadIdentityReferencePhotosAsync(input: {
     formData.append('files', filePart);
   }
 
-  const response = await fetch(`${baseUrl}/api/v1/identity/upload-reference`, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-    body: formData,
-  });
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const timeoutId = controller
+    ? setTimeout(() => controller.abort(), IDENTITY_UPLOAD_TIMEOUT_MS)
+    : null;
 
-  const payload = await parseJsonSafely(response);
-  if (!response.ok) {
-    throw buildIdentityUploadError(response.status, payload);
+  try {
+    const response = await fetch(`${baseUrl}/api/v1/identity/upload-reference`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: formData,
+      signal: controller?.signal,
+    });
+
+    const payload = await parseJsonSafely(response);
+    if (!response.ok) {
+      throw buildIdentityUploadError(response.status, payload);
+    }
+
+    return {
+      uploadedCount: Number(payload?.uploaded_count || 0),
+      referenceUrls: Array.isArray(payload?.reference_urls)
+        ? payload.reference_urls.map((value: unknown) => String(value || '')).filter(Boolean)
+        : [],
+    };
+  } catch (error) {
+    const isTimeout = error instanceof Error && error.name === 'AbortError';
+    throw new IdentityUploadError(
+      isTimeout
+        ? `Identity upload timed out after ${IDENTITY_UPLOAD_TIMEOUT_MS} ms. Check that Expo is using the current backend IP on this Wi-Fi network.`
+        : `Identity upload request failed: ${String((error as Error)?.message || 'unknown error')}`,
+      0,
+    );
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
   }
-
-  return {
-    uploadedCount: Number(payload?.uploaded_count || 0),
-    referenceUrls: Array.isArray(payload?.reference_urls)
-      ? payload.reference_urls.map((value: unknown) => String(value || '')).filter(Boolean)
-      : [],
-  };
 }
 
 function buildNormalizeActions(asset: PickedImageAsset, maxDimension: number): Action[] {

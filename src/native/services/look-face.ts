@@ -1,5 +1,5 @@
-import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
 import type { PickedImageAsset } from './image-picker';
+import { resolveNativeBackendBaseUrl } from './backend-url.js';
 
 const LOOK_FACE_TIMEOUT_MS = 45000;
 
@@ -13,7 +13,7 @@ export interface LookFaceGenerationResult {
 export async function generateLookFaceAssetAsync(
   asset: PickedImageAsset,
 ): Promise<LookFaceGenerationResult> {
-  const baseUrl = resolveBackendBaseUrl({
+  const baseUrl = resolveNativeBackendBaseUrl({
     preferProxy: false,
     allowDevLocalFallback: true,
   });

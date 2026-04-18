@@ -1,5 +1,4 @@
-import Constants from 'expo-constants';
-import { resolveBackendBaseUrl } from '../../shared/backend-base-url.js';
+import { resolveNativeBackendBaseUrl } from './backend-url.js';
 
 export type UpgradeContext = 'wardrobe' | 'ai_looks';
 
@@ -94,55 +93,10 @@ export async function verifyStripeUpgradePayment(
 }
 
 function resolveUpgradeApiBaseUrl(): string {
-  const rawBaseUrl = resolveBackendBaseUrl({
+  return resolveNativeBackendBaseUrl({
     preferProxy: true,
     allowDevLocalFallback: true,
   });
-  return rewriteLocalhostBaseUrl(rawBaseUrl)
-    .trim()
-    .replace(/\/+$/, '');
-}
-
-function rewriteLocalhostBaseUrl(baseUrl: string): string {
-  const rawBaseUrl = String(baseUrl || '').trim();
-  if (!rawBaseUrl) return '';
-
-  try {
-    const parsed = new URL(rawBaseUrl);
-    const host = String(parsed.hostname || '').trim().toLowerCase();
-    if (host !== '127.0.0.1' && host !== 'localhost') {
-      return rawBaseUrl;
-    }
-
-    const devHost = resolveExpoDevHost();
-    if (!devHost) return rawBaseUrl;
-
-    parsed.hostname = devHost;
-    return parsed.toString();
-  } catch {
-    return rawBaseUrl;
-  }
-}
-
-function resolveExpoDevHost(): string {
-  const constantsAny = Constants as any;
-  const candidates = [
-    constantsAny?.expoConfig?.hostUri,
-    constantsAny?.manifest?.debuggerHost,
-    constantsAny?.manifest2?.extra?.expoGo?.debuggerHost,
-    constantsAny?.manifest2?.extra?.expoClient?.hostUri,
-  ];
-
-  for (const candidate of candidates) {
-    const normalized = String(candidate || '').trim();
-    if (!normalized) continue;
-    const hostPart = normalized.split('/')[0].split(':')[0].trim();
-    if (!hostPart) continue;
-    if (hostPart.toLowerCase() === '127.0.0.1' || hostPart.toLowerCase() === 'localhost') continue;
-    return hostPart;
-  }
-
-  return '';
 }
 
 function normalizeContext(value: unknown): UpgradeContext | null {

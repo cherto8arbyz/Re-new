@@ -223,8 +223,8 @@ export function IdentityCaptureScreen({ navigation }: Props) {
       });
       dispatch({ type: 'SET_IDENTITY_REFERENCE_URLS', payload: result.referenceUrls });
       Alert.alert(
-        'Identity готов',
-        'Пять фото прошли проверку и сохранены для генерации аватара.',
+        'Ракурсы сохранены',
+        'Пять identity-фото прошли проверку и сохранены. Они будут использоваться для face-lock и точной подстановки лица.',
       );
       navigation.goBack();
     } catch (uploadError) {
@@ -341,7 +341,7 @@ export function IdentityCaptureScreen({ navigation }: Props) {
               style={[styles.submitButton, submitDisabled && styles.submitButtonDisabled]}
             >
               {isUploading ? <ActivityIndicator size="small" color={theme.colors.accentContrast} /> : null}
-              <Text style={styles.submitText}>Сгенерировать аватар</Text>
+              <Text style={styles.submitText}>Сохранить 5 ракурсов</Text>
             </Pressable>
           </ScrollView>
         ) : (
