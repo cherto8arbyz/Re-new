@@ -206,7 +206,7 @@ class DailyLookGarmentInput(BaseModel):
   image_url: str = Field(min_length=1)
   category: str = Field(min_length=1)
   name: str | None = None
-  color: str | None = None
+  color: str | list[str] | None = None
 
 
 class DailyLookGenerateRequest(BaseModel):
@@ -765,8 +765,18 @@ def _to_pipeline_garment(payload: DailyLookGarmentInput) -> PipelineGarment:
     category=payload.category.strip(),
     normalized_category=_normalize_garment_category(payload.category),
     name=str(payload.name or "").strip(),
-    color=str(payload.color or "").strip(),
+    color=_normalize_daily_look_color(payload.color),
   )
+
+
+def _normalize_daily_look_color(value: str | list[str] | None) -> str:
+  if isinstance(value, list):
+    return ", ".join(
+      str(item).strip()
+      for item in value
+      if str(item).strip()
+    )
+  return str(value or "").strip()
 
 
 def _normalize_garment_category(category: str | None) -> str:

@@ -44,6 +44,14 @@ export interface DailyLookGenerateResponse {
   selectedGarmentIds: string[];
 }
 
+interface DailyLookRequestGarmentPayload {
+  garment_id: string;
+  image_url: string;
+  category: string;
+  name?: string;
+  color?: string;
+}
+
 export interface DailyLookJobResponse {
   id: string;
   userId: string;
@@ -96,7 +104,7 @@ export async function createDailyLookJobAsync(input: DailyLookGenerateInput): Pr
     body: JSON.stringify({
       ...(input.gender ? { gender: input.gender } : {}),
       weather_context: input.weatherContext,
-      available_garments: resolvedGarments,
+      available_garments: resolvedGarments.map(normalizeDailyLookRequestGarment),
     }),
   });
 
@@ -126,6 +134,37 @@ async function resolveDailyLookGarmentsAsync(
   }));
 
   return resolved.filter((garment): garment is DailyLookAvailableGarmentInput => Boolean(garment));
+}
+
+function normalizeDailyLookRequestGarment(garment: DailyLookAvailableGarmentInput): DailyLookRequestGarmentPayload {
+  const normalized: DailyLookRequestGarmentPayload = {
+    garment_id: String(garment.garment_id || '').trim(),
+    image_url: String(garment.image_url || '').trim(),
+    category: String(garment.category || '').trim(),
+  };
+
+  const normalizedName = String(garment.name || '').trim();
+  if (normalizedName) {
+    normalized.name = normalizedName;
+  }
+
+  const normalizedColor = normalizeDailyLookColor(garment.color);
+  if (normalizedColor) {
+    normalized.color = normalizedColor;
+  }
+
+  return normalized;
+}
+
+function normalizeDailyLookColor(value: string | string[] | null | undefined): string {
+  if (Array.isArray(value)) {
+    return value
+      .map(item => String(item || '').trim())
+      .filter(Boolean)
+      .join(', ');
+  }
+
+  return String(value || '').trim();
 }
 
 async function ensureResolvableGarmentImageUrlAsync(
@@ -281,6 +320,15 @@ function buildDailyLookApiError(statusCode: number, payload: Record<string, unkn
   if (typeof detail === 'string' && detail.trim()) {
     return new DailyLookApiError(detail.trim(), statusCode);
   }
+  if (Array.isArray(detail)) {
+    const validationMessage = detail
+      .map(item => formatDailyLookValidationError(item))
+      .find(Boolean);
+    return new DailyLookApiError(
+      validationMessage || `Daily look request failed with status ${statusCode}.`,
+      statusCode,
+    );
+  }
   if (detail && typeof detail === 'object') {
     const detailObject = detail as Record<string, unknown>;
     return new DailyLookApiError(
@@ -293,4 +341,21 @@ function buildDailyLookApiError(statusCode: number, payload: Record<string, unkn
     String(payload?.message || `Daily look request failed with status ${statusCode}.`),
     statusCode,
   );
+}
+
+function formatDailyLookValidationError(detail: unknown): string {
+  if (!detail || typeof detail !== 'object') return '';
+
+  const detailObject = detail as Record<string, unknown>;
+  const message = String(detailObject.msg || '').trim();
+  const location = Array.isArray(detailObject.loc)
+    ? detailObject.loc
+      .map(item => String(item ?? '').trim())
+      .filter(Boolean)
+      .join('.')
+    : '';
+
+  if (!message) return '';
+  if (!location) return `Daily look request is invalid: ${message}`;
+  return `Daily look request is invalid at ${location}: ${message}`;
 }

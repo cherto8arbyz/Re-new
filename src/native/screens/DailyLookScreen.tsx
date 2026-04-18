@@ -233,6 +233,15 @@ function resolveFailureUi(errorMessage: string | null): FailureUiContent {
     };
   }
 
+  if (normalized.includes('daily look request is invalid')) {
+    return {
+      title: 'Request data mismatch.',
+      message: message || 'The daily look payload does not match the backend schema yet.',
+      retryLabel: 'Generate another variant',
+      action: 'regenerate',
+    };
+  }
+
   return {
     title: 'AI stylist needs more data.',
     message: message || 'Please try again after syncing more wardrobe photos.',
